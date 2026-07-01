@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>WebAR Exhibition</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  #container { width: 100%; height: 100%; position: relative; }
+  #loading {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    color: #fff; font: 18px sans-serif; z-index: 100;
+  }
+  #status {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    color: #0f0; font: 14px monospace; z-index: 100; text-align: center;
+  }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="loading">Loading WebAR...</div>
+  <div id="status"></div>
+</div>
+
+<!-- MindAR + three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+
+<script>
+// ─── Config ───────────────────────────────────────────
+const TARGET_MIND = './targets.mind';  // ← swap with your compiled poster target
+
+// ─── Mock data (replace with real sensor data later) ──
+const mockDevices = {
+  light:    { label: 'Light',    unit: 'lux',  value: () => (800 + Math.random() * 400).toFixed(0) },
+  temp:     { label: 'Temp',     unit: '°C',   value: () => (22 + Math.random() * 3).toFixed(1) },
+  presence: { label: 'Presence', unit: '',     value: () => Math.random() > 0.3 ? 'Occupied' : 'Empty' },
+};
+
+// ─── Whiteboard ───────────────────────────────────────
+function createWhiteboard(width, height, label) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+  const geometry = new THREE.PlaneGeometry(width, height);
+  const mesh = new THREE.Mesh(geometry, material);
+
+  mesh.userData = {
+    canvas, ctx, label,
+    width, height,
+    dataFn: mockDevices[label] || mockDevices.light,
+    buttonHit: false,
+  };
+
+  // Button zone (bottom 25% of whiteboard)
+  mesh.userData.buttonZone = {
+    x: 0,
+    y: -height * 0.25,
+    w: width * 0.6,
+    h: height * 0.25,
+    label: 'Toggle',
+    active: false,
+  };
+
+  updateWhiteboard(mesh);
+  return mesh;
+}
+
+function updateWhiteboard(board) {
+  const { canvas, ctx, label, dataFn, buttonZone } = board.userData;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Background
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.roundRect(0, 0, w, h, 16);
+  ctx.fill();
+
+  // Title
+  ctx.fillStyle = '#333';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.fillText(label, 24, 44);
+
+  // Value
+  const val = dataFn.value();
+  ctx.fillStyle = buttonZone.active ? '#e74c3c' : '#2ecc71';
+  ctx.font = 'bold 56px monospace';
+  ctx.fillText(val, 24, 120);
+
+  // Button
+  const bx = w / 2 - buttonZone.w * w / 2;
+  const by = h * 0.72;
+  const bw = buttonZone.w * w;
+  const bh = buttonZone.h * h;
+  ctx.fillStyle = buttonZone.active ? '#e74c3c' : '#3498db';
+  ctx.roundRect(bx, by, bw, bh, 10);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(buttonZone.active ? 'ON' : 'OFF', w / 2, by + bh / 2 + 7);
+  ctx.textAlign = 'left';
+
+  board.material.map.needsUpdate = true;
+}
+
+// ─── Raycaster interaction ────────────────────────────
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+function checkButtonHit(event, camera, whiteboards) {
+  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+
+  for (const board of whiteboards) {
+    const intersects = raycaster.intersectObject(board);
+    if (intersects.length > 0) {
+      const uv = intersects[0].uv;
+      if (!uv) continue;
+      const { buttonZone } = board.userData;
+      // uv.x in [0,1], uv.y in [0,1] — map to whiteboard local coords
+      const localX = (uv.x - 0.5) * board.userData.width;
+      const localY = (0.5 - uv.y) * board.userData.height;
+      const bz = buttonZone;
+      if (Math.abs(localX - bz.x) < bz.w / 2 &&
+          localY > bz.y - bz.h / 2 && localY < bz.y + bz.h / 2) {
+        bz.active = !bz.active;
+        updateWhiteboard(board);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ─── Main ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById('container');
+  const loading = document.getElementById('loading');
+  const status = document.getElementById('status');
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  container.appendChild(renderer.domElement);
+
+  // Whiteboards placed relative to image target
+  const whiteboards = [
+    createWhiteboard(0.4, 0.2, 'light'),
+    createWhiteboard(0.4, 0.2, 'temp'),
+    createWhiteboard(0.4, 0.2, 'presence'),
+  ];
+
+  // Position around target (image target is ~1 unit wide)
+  whiteboards[0].position.set(0, 0.4, 0);
+  whiteboards[1].position.set(0, 0.05, 0);
+  whiteboards[2].position.set(0, -0.3, 0);
+
+  const anchor = new THREE.Object3D();
+  whiteboards.forEach(wb => anchor.add(wb));
+  scene.add(anchor);
+
+  // MindAR
+  const mindar = new MINDAR.IMAGE.MindARThree({
+    container,
+    imageTargetSrc: TARGET_MIND,
+  });
+  const { renderer: mrRenderer, cssRenderer } = mindar;
+
+  mindar.start().then(() => {
+    loading.style.display = 'none';
+    status.textContent = 'Camera active — point at the poster';
+  }).catch(err => {
+    loading.textContent = 'Error: ' + err.message;
+    console.error(err);
+  });
+
+  // Anchor lifecycle
+  let anchorSet = false;
+  mindar.addEventListener('targetFound', () => {
+    anchor.visible = true;
+    anchorSet = true;
+    status.textContent = 'Tracking';
+  });
+  mindar.addEventListener('targetLost', () => {
+    anchor.visible = false;
+    anchorSet = false;
+    status.textContent = 'Lost — point at poster';
+  });
+
+  // Touch interaction
+  window.addEventListener('click', (e) => {
+    if (!anchorSet) return;
+    if (checkButtonHit(e, mrRenderer.videoCamera, whiteboards)) {
+      // brief feedback
+      status.textContent = 'Button pressed!';
+      setTimeout(() => { if (anchorSet) status.textContent = 'Tracking'; }, 600);
+    }
+  });
+
+  // Render loop
+  function animate() {
+    requestAnimationFrame(animate);
+
+    // Update whiteboard data every 2 seconds
+    if (anchorSet) {
+      const now = Date.now();
+      if (!animate._lastUpdate || now - animate._lastUpdate > 2000) {
+        whiteboards.forEach(wb => updateWhiteboard(wb));
+        animate._lastUpdate = now;
+      }
+    }
+
+    renderer.clear();
+    if (mrRenderer.ready) {
+      mrRenderer.render(renderer, cssRenderer);
+    }
+  }
+  animate._lastUpdate = 0;
+  animate();
+
+  // Resize
+  window.addEventListener('resize', () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+});
+</script>
+</body>
+</html>
