@@ -94,10 +94,17 @@
   <section id="devices" class="devices" aria-label="Device controls"></section>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { MindARThree } from "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js";
 
-<script>
 const TARGET_MIND = "./targets.mind";
 const API_KEY = "nKG9DR0Cyef6yK12E2X0ICZkNdp-Ds2d1-HFbzHJ5J4";
 const API_BASE_KEY = "tuyaBridgeApiBase";
@@ -108,9 +115,16 @@ function getApiBase() {
   return (localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE).replace(/\/+$/, "");
 }
 
+function assertSecureApiBase(base) {
+  if (location.protocol === "https:" && base.startsWith("http://")) {
+    throw Object.assign(new Error("Bridge needs HTTPS for GitHub Pages."), { status: 0 });
+  }
+}
+
 async function apiRequest(path, options = {}) {
   const base = getApiBase();
   if (!base) throw Object.assign(new Error("Set the Bridge URL first."), { status: 0 });
+  assertSecureApiBase(base);
 
   const response = await fetch(`${base}${path}`, {
     ...options,
@@ -157,7 +171,11 @@ function mapCheckingResult(value) {
 }
 
 const TuyaApi = {
-  health: () => fetch(`${getApiBase()}/health`).then((r) => r.json()),
+  health: () => {
+    const base = getApiBase();
+    assertSecureApiBase(base);
+    return fetch(`${base}/health`).then((r) => r.json());
+  },
   getLightStatus: () => apiRequest("/api/devices/light/status"),
   getOccupancyStatus: () => apiRequest("/api/devices/occupancy/status"),
   setLightPower: (on) => apiRequest("/api/devices/light/commands", {
@@ -465,27 +483,27 @@ document.addEventListener("DOMContentLoaded", async () => {
   const loading = document.getElementById("loading");
   const status = document.getElementById("status");
 
-  const mindar = new MINDAR.IMAGE.MindARThree({ container, imageTargetSrc: TARGET_MIND });
-  const { renderer, scene, camera } = mindar;
-  const anchor = mindar.addAnchor(0);
-  const boards = cards.map((card) => createWhiteboard(card, 0.72, 0.36));
-  boards[0].position.set(0, 0.34, 0);
-  boards[1].position.set(0, -0.12, 0);
-  boards.forEach((board) => anchor.group.add(board));
-
-  anchor.onTargetFound = () => { status.textContent = "Tracking target"; };
-  anchor.onTargetLost = () => { status.textContent = "Target lost"; };
-
   try {
+    const mindar = new MindARThree({ container, imageTargetSrc: TARGET_MIND });
+    const { renderer, scene, camera } = mindar;
+    const anchor = mindar.addAnchor(0);
+    const boards = cards.map((card) => createWhiteboard(card, 0.72, 0.36));
+    boards[0].position.set(0, 0.34, 0);
+    boards[1].position.set(0, -0.12, 0);
+    boards.forEach((board) => anchor.group.add(board));
+
+    anchor.onTargetFound = () => { status.textContent = "Tracking target"; };
+    anchor.onTargetLost = () => { status.textContent = "Target lost"; };
+
     await mindar.start();
     loading.style.display = "none";
     status.textContent = "Camera active";
+    renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    window.addEventListener("resize", () => renderer.setSize(window.innerWidth, window.innerHeight));
   } catch (error) {
-    loading.textContent = `Camera error: ${error.message}`;
+    loading.textContent = `AR unavailable: ${error.message}`;
   }
 
-  renderer.setAnimationLoop(() => renderer.render(scene, camera));
-  window.addEventListener("resize", () => renderer.setSize(window.innerWidth, window.innerHeight));
   startPolling();
 });
 </script>
