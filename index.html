@@ -86,7 +86,7 @@
 <main id="app">
   <section class="topbar" aria-label="Bridge settings">
     <label>Bridge URL
-      <input id="apiBase" type="text" inputmode="url" autocomplete="url" placeholder="http://124.223.57.30:8000">
+      <input id="apiBase" type="text" inputmode="url" autocomplete="url" placeholder="https://api.iiishop.top">
     </label>
     <button id="saveApi" type="button">Save</button>
     <div id="health" class="health">health: unknown</div>
@@ -108,7 +108,7 @@ import { MindARThree } from "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/min
 const TARGET_MIND = "./targets.mind";
 const API_KEY = "nKG9DR0Cyef6yK12E2X0ICZkNdp-Ds2d1-HFbzHJ5J4";
 const API_BASE_KEY = "tuyaBridgeApiBase";
-const DEFAULT_API_BASE = "http://124.223.57.30:8000";
+const DEFAULT_API_BASE = "https://api.iiishop.top";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function getApiBase() {
