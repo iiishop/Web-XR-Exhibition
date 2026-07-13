@@ -28,9 +28,7 @@
   input[type="text"] { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: #0b1014; padding: 10px 12px; }
   input[type="range"] { width: 100%; accent-color: var(--accent); }
   label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-  canvas { display: block; }
-
-  #container { position: fixed; inset: 0; }
+  #container { position: fixed; inset: 0; pointer-events: none; }
   #loading {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     z-index: 20; color: var(--text); background: rgba(0, 0, 0, 0.58); border: 1px solid var(--line);
@@ -94,25 +92,16 @@
   <section id="devices" class="devices" aria-label="Device controls"></section>
 </main>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-  }
-}
-</script>
-<script type="module">
-import * as THREE from "three";
-import { MindARThree } from "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js";
-
-const TARGET_MIND = "./targets.mind";
+<script>
 const API_KEY = "nKG9DR0Cyef6yK12E2X0ICZkNdp-Ds2d1-HFbzHJ5J4";
 const API_BASE_KEY = "tuyaBridgeApiBase";
 const DEFAULT_API_BASE = "https://api.iiishop.top";
+const LEGACY_API_BASE = "http://124.223.57.30:8000";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function getApiBase() {
-  return (localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE).replace(/\/+$/, "");
+  const saved = (localStorage.getItem(API_BASE_KEY) || "").replace(/\/+$/, "");
+  return saved && saved !== LEGACY_API_BASE ? saved : DEFAULT_API_BASE;
 }
 
 function assertSecureApiBase(base) {
@@ -153,10 +142,6 @@ function getFriendlyError(status) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number(value) || 0));
-}
-
-function hslColor(hue, saturation = 100, light = 50) {
-  return `hsl(${clamp(hue, 0, 360)} ${clamp(saturation, 0, 100)}% ${clamp(light, 0, 100)}%)`;
 }
 
 function mapCheckingResult(value) {
@@ -265,7 +250,6 @@ class DeviceCard {
     this.el.querySelectorAll("button, input").forEach((control) => {
       if (!control.matches("#apiBase")) control.disabled = this.busy;
     });
-    if (this.board) updateWhiteboard(this.board, this);
   }
 }
 
@@ -409,67 +393,6 @@ async function refreshHealth() {
   }
 }
 
-function createWhiteboard(card, width, height) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 640;
-  canvas.height = 320;
-  const texture = new THREE.CanvasTexture(canvas);
-  const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, height),
-    new THREE.MeshBasicMaterial({ map: texture, transparent: true })
-  );
-  mesh.userData = { canvas, ctx: canvas.getContext("2d"), width, height, card };
-  card.board = mesh;
-  updateWhiteboard(mesh, card);
-  return mesh;
-}
-
-function updateWhiteboard(board, card) {
-  const { canvas, ctx } = board.userData;
-  const w = canvas.width;
-  const h = canvas.height;
-  const state = card.state || {};
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "rgba(10, 14, 18, 0.86)";
-  ctx.roundRect(0, 0, w, h, 22);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.22)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.fillStyle = "#f2f7f4";
-  ctx.font = "700 38px sans-serif";
-  ctx.fillText(card.device.title, 28, 58);
-  ctx.fillStyle = "#9ba8a3";
-  ctx.font = "24px ui-monospace, monospace";
-
-  if (card.device.id === "light") {
-    const colour = state.color ? hslColor(state.color.hue, state.color.saturation_percent, 54) : "#67d5ff";
-    ctx.fillStyle = state.power ? colour : "#ff6b6b";
-    ctx.beginPath();
-    ctx.arc(72, 156, 42, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#f2f7f4";
-    ctx.font = "700 54px ui-monospace, monospace";
-    ctx.fillText(state.power == null ? "unknown" : (state.power ? "ON" : "OFF"), 140, 164);
-    ctx.fillStyle = "#9ba8a3";
-    ctx.font = "24px ui-monospace, monospace";
-    ctx.fillText(`mode ${state.mode || "-"}`, 140, 208);
-  } else {
-    ctx.fillStyle = state.occupied ? "#55f0a6" : "#ffc857";
-    ctx.font = "700 54px ui-monospace, monospace";
-    ctx.fillText(state.occupied == null ? "unknown" : (state.occupied ? "PRESENCE" : "EMPTY"), 28, 158);
-    ctx.fillStyle = "#9ba8a3";
-    ctx.font = "24px ui-monospace, monospace";
-    ctx.fillText(`distance ${state.closest_distance_m == null ? "-" : state.closest_distance_m.toFixed(2) + "m"}`, 30, 208);
-  }
-  if (card.error) {
-    ctx.fillStyle = "#ff6b6b";
-    ctx.font = "20px sans-serif";
-    ctx.fillText(card.error, 28, 280);
-  }
-  board.material.map.needsUpdate = true;
-}
-
 async function startPolling() {
   await refreshHealth();
   cards.forEach((card) => {
@@ -479,31 +402,11 @@ async function startPolling() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  const container = document.getElementById("container");
   const loading = document.getElementById("loading");
   const status = document.getElementById("status");
 
-  try {
-    const mindar = new MindARThree({ container, imageTargetSrc: TARGET_MIND });
-    const { renderer, scene, camera } = mindar;
-    const anchor = mindar.addAnchor(0);
-    const boards = cards.map((card) => createWhiteboard(card, 0.72, 0.36));
-    boards[0].position.set(0, 0.34, 0);
-    boards[1].position.set(0, -0.12, 0);
-    boards.forEach((board) => anchor.group.add(board));
-
-    anchor.onTargetFound = () => { status.textContent = "Tracking target"; };
-    anchor.onTargetLost = () => { status.textContent = "Target lost"; };
-
-    await mindar.start();
-    loading.style.display = "none";
-    status.textContent = "Camera active";
-    renderer.setAnimationLoop(() => renderer.render(scene, camera));
-    window.addEventListener("resize", () => renderer.setSize(window.innerWidth, window.innerHeight));
-  } catch (error) {
-    loading.textContent = `AR unavailable: ${error.message}`;
-  }
-
+  loading.style.display = "none";
+  status.textContent = "Dashboard active";
   startPolling();
 });
 </script>
