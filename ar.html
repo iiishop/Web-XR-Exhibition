@@ -390,6 +390,7 @@ function drawBoard() {
 }
 
 function drawButton(ctx, zone, label, color) {
+  ctx.save();
   ctx.fillStyle = "rgba(255,255,255,0.08)";
   ctx.roundRect(zone.x, zone.y, zone.w, zone.h, 16);
   ctx.fill();
@@ -397,10 +398,11 @@ function drawButton(ctx, zone, label, color) {
   ctx.lineWidth = 3;
   ctx.stroke();
   ctx.fillStyle = "#f4fbf7";
-  ctx.font = "700 24px system-ui, sans-serif";
+  ctx.font = "700 24px Arial, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(label, zone.x + zone.w / 2, zone.y + 37);
-  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, zone.x + zone.w / 2, zone.y + zone.h / 2);
+  ctx.restore();
 }
 
 function render() {
