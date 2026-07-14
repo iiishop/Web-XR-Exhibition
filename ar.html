@@ -258,6 +258,7 @@ const state = {
   boardTexture: null,
   boardZones: {},
   targetVisible: false,
+  panelPlaced: false,
   smoothGroup: null,
   tempPosition: new THREE.Vector3(),
   tempQuaternion: new THREE.Quaternion(),
@@ -540,7 +541,7 @@ function handleBoardHit(x, y) {
 
 function bindRayInteraction(renderer, camera) {
   const hitPanel = (event) => {
-    if (!state.targetVisible || !state.board) return;
+    if (!state.panelPlaced || !state.board) return;
     event.preventDefault();
     const rect = renderer.domElement.getBoundingClientRect();
     state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -587,6 +588,7 @@ async function startAr() {
   scene.add(state.smoothGroup);
   anchor.onTargetFound = () => {
     state.targetVisible = true;
+    state.panelPlaced = true;
     state.smoothGroup.visible = true;
     anchor.group.updateMatrixWorld(true);
     anchor.group.matrixWorld.decompose(state.smoothGroup.position, state.smoothGroup.quaternion, state.smoothGroup.scale);
@@ -596,8 +598,7 @@ async function startAr() {
   };
   anchor.onTargetLost = () => {
     state.targetVisible = false;
-    state.smoothGroup.visible = false;
-    ui.note.textContent = "Find reference target";
+    ui.note.textContent = state.panelPlaced ? "Panel locked, find target to recalibrate" : "Find reference target";
   };
 
   await mindar.start();
