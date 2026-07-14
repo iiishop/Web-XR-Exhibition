@@ -46,6 +46,7 @@
     background: linear-gradient(150deg, rgba(16, 30, 34, 0.88), rgba(8, 12, 16, 0.82));
     box-shadow: 0 18px 54px rgba(0, 0, 0, 0.38);
     backdrop-filter: blur(18px);
+    display: none;
   }
 
   .head { display: flex; justify-content: space-between; gap: 14px; align-items: start; }
@@ -254,7 +255,15 @@ const state = {
   mode: "colour",
   busy: false,
   board: null,
-  boardTexture: null
+  boardTexture: null,
+  boardZones: {},
+  targetVisible: false,
+  smoothGroup: null,
+  tempPosition: new THREE.Vector3(),
+  tempQuaternion: new THREE.Quaternion(),
+  tempScale: new THREE.Vector3(),
+  raycaster: new THREE.Raycaster(),
+  pointer: new THREE.Vector2()
 };
 
 async function apiRequest(path, options = {}) {
@@ -301,6 +310,13 @@ function drawBoard() {
   const temp = Math.round(light.temperature_percent || 0);
   const hue = Math.round(light.color?.hue || ui.arcInput.value);
   const accent = state.mode === "white" ? "#ffd166" : `hsl(${hue} 95% 60%)`;
+  const zones = {
+    mode: { x: 34, y: 332, w: 164, h: 58 },
+    power: { x: 220, y: 332, w: 172, h: 58 },
+    brightness: { x: 455, y: 346, w: 255, h: 28 },
+    arc: { cx: 590, cy: 244, r: 100 }
+  };
+  state.boardZones = zones;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "rgba(7, 16, 19, 0.86)";
@@ -309,27 +325,82 @@ function drawBoard() {
   ctx.strokeStyle = "rgba(210, 236, 228, 0.25)";
   ctx.lineWidth = 3;
   ctx.stroke();
-  ctx.fillStyle = accent;
-  ctx.beginPath();
-  ctx.arc(74, 112, 38, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#f4fbf7";
-  ctx.font = "700 34px system-ui, sans-serif";
-  ctx.fillText(`Light ${light.power ? "on" : "off"}`, 130, 72);
-  ctx.font = "600 26px ui-monospace, monospace";
-  ctx.fillText(`${state.mode}  ${brightness}%`, 130, 116);
+
+  ctx.fillStyle = "rgba(244, 251, 247, 0.06)";
+  ctx.fillRect(0, 0, canvas.width, 84);
   ctx.fillStyle = "#9fb0a8";
   ctx.font = "22px ui-monospace, monospace";
-  ctx.fillText(`temp ${temp}%   hue ${hue}deg`, 130, 156);
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 9;
+  ctx.fillText("ray control", 34, 50);
+
+  ctx.fillStyle = accent;
   ctx.beginPath();
-  ctx.arc(520, 160, 76, Math.PI, Math.PI + Math.PI * (brightness / 100));
+  ctx.arc(72, 168, 42, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "700 40px system-ui, sans-serif";
+  ctx.fillText(`Light ${light.power ? "on" : "off"}`, 132, 146);
+  ctx.font = "600 28px ui-monospace, monospace";
+  ctx.fillText(`${state.mode}  ${brightness}%`, 132, 192);
+  ctx.fillStyle = "#9fb0a8";
+  ctx.font = "23px ui-monospace, monospace";
+  ctx.fillText(`temp ${temp}%   hue ${hue}deg`, 132, 235);
+
+  const arc = zones.arc;
+  const gradient = ctx.createConicGradient(Math.PI, arc.cx, arc.cy);
+  if (state.mode === "white") {
+    gradient.addColorStop(0, "#ff8b3d");
+    gradient.addColorStop(0.5, "#fff0c0");
+    gradient.addColorStop(1, "#78d7ff");
+  } else {
+    gradient.addColorStop(0, "#ff4f5e");
+    gradient.addColorStop(0.18, "#ffd166");
+    gradient.addColorStop(0.36, "#53e37d");
+    gradient.addColorStop(0.58, "#48c7ff");
+    gradient.addColorStop(0.78, "#8f6bff");
+    gradient.addColorStop(1, "#ff4f5e");
+  }
+  ctx.strokeStyle = gradient;
+  ctx.lineWidth = 24;
+  ctx.beginPath();
+  ctx.arc(arc.cx, arc.cy, arc.r, Math.PI, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(7, 16, 19, 0.9)";
+  ctx.beginPath();
+  ctx.arc(arc.cx, arc.cy, 64, Math.PI, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "700 34px ui-monospace, monospace";
+  ctx.fillText(state.mode === "white" ? `${temp}` : `${hue}`, arc.cx - 34, arc.cy - 20);
+
+  drawButton(ctx, zones.mode, state.mode === "white" ? "White" : "Colour", state.mode === "white" ? "#ffd166" : "#7ee7ff");
+  drawButton(ctx, zones.power, light.power ? "Turn off" : "Turn on", light.power ? "#ff6b6b" : "#7ff2b4");
+
+  const track = zones.brightness;
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  ctx.roundRect(track.x, track.y, track.w, track.h, 14);
+  ctx.fill();
+  ctx.fillStyle = accent;
+  ctx.roundRect(track.x, track.y, track.w * brightness / 100, track.h, 14);
+  ctx.fill();
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "700 24px ui-monospace, monospace";
+  ctx.fillText(`${brightness}%`, track.x + track.w + 16, track.y + 23);
+
+  state.boardTexture.needsUpdate = true;
+}
+
+function drawButton(ctx, zone, label, color) {
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.roundRect(zone.x, zone.y, zone.w, zone.h, 16);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
   ctx.stroke();
   ctx.fillStyle = "#f4fbf7";
-  ctx.font = "700 30px ui-monospace, monospace";
-  ctx.fillText(`${brightness}`, 490, 166);
-  state.boardTexture.needsUpdate = true;
+  ctx.font = "700 24px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(label, zone.x + zone.w / 2, zone.y + 37);
+  ctx.textAlign = "left";
 }
 
 function render() {
@@ -396,14 +467,14 @@ function applyCurrentControl() {
 
 function createBoard() {
   const canvas = document.createElement("canvas");
-  canvas.width = 640;
-  canvas.height = 240;
+  canvas.width = 768;
+  canvas.height = 420;
   const texture = new THREE.CanvasTexture(canvas);
   const board = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.46, 0.18),
+    new THREE.PlaneGeometry(0.54, 0.30),
     new THREE.MeshBasicMaterial({ map: texture, transparent: true })
   );
-  board.position.set(0, 0.10, 0.02);
+  board.position.set(0, 0, 0);
   board.userData = { canvas, ctx: canvas.getContext("2d") };
   state.board = board;
   state.boardTexture = texture;
@@ -425,19 +496,108 @@ ui.powerButton.addEventListener("click", () => {
   runCommand(() => TuyaApi.setLightPower(!state.light?.power));
 });
 
+function valueFromArc(x, y) {
+  const arc = state.boardZones.arc;
+  const angle = Math.atan2(arc.cy - y, x - arc.cx);
+  const clamped = Math.max(0, Math.min(Math.PI, angle));
+  const ratio = 1 - clamped / Math.PI;
+  return Math.round(ratio * Number(ui.arcInput.max));
+}
+
+function hitZone(zone, x, y) {
+  return x >= zone.x && x <= zone.x + zone.w && y >= zone.y && y <= zone.y + zone.h;
+}
+
+function handleBoardHit(x, y) {
+  const zones = state.boardZones;
+  if (hitZone(zones.power, x, y)) {
+    runCommand(() => TuyaApi.setLightPower(!state.light?.power));
+    return;
+  }
+  if (hitZone(zones.mode, x, y)) {
+    state.mode = state.mode === "white" ? "colour" : "white";
+    render();
+    runCommand(applyCurrentControl);
+    return;
+  }
+  if (hitZone(zones.brightness, x, y)) {
+    const ratio = Math.max(0, Math.min(1, (x - zones.brightness.x) / zones.brightness.w));
+    ui.brightnessInput.value = Math.round(1 + ratio * 99);
+    render();
+    runCommand(applyCurrentControl);
+    return;
+  }
+  const dx = x - zones.arc.cx;
+  const dy = y - zones.arc.cy;
+  if ((dx * dx + dy * dy) <= zones.arc.r * zones.arc.r && y <= zones.arc.cy + 12) {
+    ui.arcInput.value = valueFromArc(x, y);
+    render();
+    runCommand(applyCurrentControl);
+  }
+}
+
+function bindRayInteraction(renderer, camera) {
+  renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (!state.targetVisible || !state.board) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    state.pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    state.raycaster.setFromCamera(state.pointer, camera);
+    const hit = state.raycaster.intersectObject(state.board)[0];
+    if (!hit?.uv) return;
+    const { canvas } = state.board.userData;
+    handleBoardHit(hit.uv.x * canvas.width, (1 - hit.uv.y) * canvas.height);
+  });
+}
+
+function updateSmoothedAnchor(anchor) {
+  if (!state.targetVisible || !state.smoothGroup) return;
+  anchor.group.updateMatrixWorld(true);
+  anchor.group.matrixWorld.decompose(state.tempPosition, state.tempQuaternion, state.tempScale);
+  state.tempPosition.y += 0.10;
+  state.tempPosition.z += 0.02;
+  state.smoothGroup.position.lerp(state.tempPosition, 0.18);
+  state.smoothGroup.quaternion.slerp(state.tempQuaternion, 0.18);
+  state.smoothGroup.scale.lerp(state.tempScale, 0.18);
+}
+
 async function startAr() {
   const mindar = new MindARThree({
     container: document.getElementById("ar-root"),
-    imageTargetSrc: "./targets.mind"
+    imageTargetSrc: "./targets.mind",
+    filterMinCF: 0.0005,
+    filterBeta: 10,
+    warmupTolerance: 5,
+    missTolerance: 5
   });
   const { renderer, scene, camera } = mindar;
   const anchor = mindar.addAnchor(0);
-  anchor.group.add(createBoard());
-  anchor.onTargetFound = () => { ui.note.textContent = "Reference target locked"; };
-  anchor.onTargetLost = () => { ui.note.textContent = "Find reference target"; };
+  state.smoothGroup = new THREE.Group();
+  state.smoothGroup.position.set(0, 0.10, 0.02);
+  state.smoothGroup.visible = false;
+  state.smoothGroup.add(createBoard());
+  scene.add(state.smoothGroup);
+  anchor.onTargetFound = () => {
+    state.targetVisible = true;
+    state.smoothGroup.visible = true;
+    anchor.group.updateMatrixWorld(true);
+    anchor.group.matrixWorld.decompose(state.smoothGroup.position, state.smoothGroup.quaternion, state.smoothGroup.scale);
+    state.smoothGroup.position.y += 0.10;
+    state.smoothGroup.position.z += 0.02;
+    ui.note.textContent = "Tap the AR panel";
+  };
+  anchor.onTargetLost = () => {
+    state.targetVisible = false;
+    state.smoothGroup.visible = false;
+    ui.note.textContent = "Find reference target";
+  };
 
   await mindar.start();
-  renderer.setAnimationLoop(() => renderer.render(scene, camera));
+  bindRayInteraction(renderer, camera);
+  renderer.setAnimationLoop(() => {
+    updateSmoothedAnchor(anchor);
+    renderer.render(scene, camera);
+  });
 }
 
 refreshLight();
