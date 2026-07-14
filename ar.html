@@ -269,7 +269,9 @@ const state = {
   tempScale: new THREE.Vector3(),
   raycaster: new THREE.Raycaster(),
   pointer: new THREE.Vector2(),
-  activeControl: null
+  activeControl: null,
+  dragStartX: 0,
+  dragStartValue: 0
 };
 
 async function apiRequest(path, options = {}) {
@@ -317,13 +319,20 @@ function getBrightness(light) {
     : light?.brightness_percent;
 }
 
+function displayValues() {
+  const light = state.light || {};
+  return {
+    power: light.power,
+    brightness: Math.round(Number(ui.brightnessInput.value) || getBrightness(light) || 80),
+    temp: Math.round(Number(state.mode === "white" ? ui.arcInput.value : light.temperature_percent) || 0),
+    hue: Math.round(Number(state.mode === "colour" ? ui.arcInput.value : light.color?.hue) || 0)
+  };
+}
+
 function drawBoard() {
   if (!state.board) return;
   const { canvas, ctx } = state.board.userData;
-  const light = state.light || {};
-  const brightness = Math.round(getBrightness(light) || ui.brightnessInput.value);
-  const temp = Math.round(light.temperature_percent || 0);
-  const hue = Math.round(light.color?.hue || ui.arcInput.value);
+  const { power, brightness, temp, hue } = displayValues();
   const accent = state.mode === "white" ? "#ffd166" : `hsl(${hue} 95% 60%)`;
   const zones = {
     mode: { x: 34, y: 332, w: 164, h: 58, hitX: 18, hitY: 312, hitW: 196, hitH: 96 },
@@ -353,7 +362,7 @@ function drawBoard() {
   ctx.fill();
   ctx.fillStyle = "#f4fbf7";
   ctx.font = "700 40px system-ui, sans-serif";
-  ctx.fillText(`Light ${light.power ? "on" : "off"}`, 132, 146);
+  ctx.fillText(`Light ${power ? "on" : "off"}`, 132, 146);
   ctx.font = "600 28px ui-monospace, monospace";
   ctx.fillText(`${state.mode}  ${brightness}%`, 132, 192);
   ctx.fillStyle = "#9fb0a8";
@@ -361,34 +370,24 @@ function drawBoard() {
   ctx.fillText(`temp ${temp}%   hue ${hue}deg`, 132, 235);
 
   const arc = zones.arc;
-  const gradient = ctx.createConicGradient(Math.PI, arc.cx, arc.cy);
-  if (state.mode === "white") {
-    gradient.addColorStop(0, "#ff8b3d");
-    gradient.addColorStop(0.5, "#fff0c0");
-    gradient.addColorStop(1, "#78d7ff");
-  } else {
-    gradient.addColorStop(0, "#ff4f5e");
-    gradient.addColorStop(0.18, "#ffd166");
-    gradient.addColorStop(0.36, "#53e37d");
-    gradient.addColorStop(0.58, "#48c7ff");
-    gradient.addColorStop(0.78, "#8f6bff");
-    gradient.addColorStop(1, "#ff4f5e");
-  }
-  ctx.strokeStyle = gradient;
   ctx.lineWidth = 24;
-  ctx.beginPath();
-  ctx.arc(arc.cx, arc.cy, arc.r, Math.PI, Math.PI * 2);
-  ctx.stroke();
+  drawRotatingArc(ctx, arc, state.mode === "white" ? temp : hue);
   ctx.fillStyle = "rgba(7, 16, 19, 0.9)";
   ctx.beginPath();
   ctx.arc(arc.cx, arc.cy, 64, Math.PI, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = "#f4fbf7";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(arc.cx, arc.cy - arc.r - 26);
+  ctx.lineTo(arc.cx, arc.cy - 58);
+  ctx.stroke();
   ctx.fillStyle = "#f4fbf7";
   ctx.font = "700 34px ui-monospace, monospace";
   ctx.fillText(state.mode === "white" ? `${temp}` : `${hue}`, arc.cx - 34, arc.cy - 20);
 
   drawButton(ctx, zones.mode, state.mode === "white" ? "White" : "Colour", state.mode === "white" ? "#ffd166" : "#7ee7ff");
-  drawButton(ctx, zones.power, light.power ? "Turn off" : "Turn on", light.power ? "#ff6b6b" : "#7ff2b4");
+  drawButton(ctx, zones.power, power ? "Turn off" : "Turn on", power ? "#ff6b6b" : "#7ff2b4");
 
   const track = zones.brightness;
   ctx.fillStyle = "rgba(255,255,255,0.12)";
@@ -404,6 +403,24 @@ function drawBoard() {
   ctx.fillText(`${brightness}%`, track.x + track.w + 16, track.y + 23);
 
   state.boardTexture.needsUpdate = true;
+}
+
+function drawRotatingArc(ctx, arc, value) {
+  const max = state.mode === "white" ? 100 : 360;
+  const centerAngle = Math.PI * 1.5;
+  for (let i = 0; i < 72; i += 1) {
+    const a0 = Math.PI + i * Math.PI / 72;
+    const a1 = Math.PI + (i + 1) * Math.PI / 72;
+    const offset = (a0 + a1) / 2 - centerAngle;
+    const raw = value + offset / Math.PI * max;
+    const v = state.mode === "white" ? clamp(raw, 0, max) : (raw % max + max) % max;
+    ctx.strokeStyle = state.mode === "white"
+      ? `hsl(${32 + v / max * 168} 100% ${58 + v / max * 28}%)`
+      : `hsl(${v} 95% 60%)`;
+    ctx.beginPath();
+    ctx.arc(arc.cx, arc.cy, arc.r, a0, a1 + 0.01);
+    ctx.stroke();
+  }
 }
 
 function drawButton(ctx, zone, label, color) {
@@ -567,7 +584,9 @@ function setBrightnessFromHit(x) {
 }
 
 function setArcFromHit(x, y) {
-  ui.arcInput.value = valueFromArc(x, y);
+  const max = Number(ui.arcInput.max);
+  const next = state.dragStartValue - (x - state.dragStartX) * max / 260;
+  ui.arcInput.value = Math.round(state.mode === "white" ? clamp(next, 0, max) : (next % max + max) % max);
   render();
 }
 
@@ -595,6 +614,8 @@ function handleBoardHit(x, y, commitContinuous = true) {
   }
   if (hitArc(x, y)) {
     state.activeControl = "arc";
+    state.dragStartX = x;
+    state.dragStartValue = Number(ui.arcInput.value);
     setArcFromHit(x, y);
     if (commitContinuous) runCommand(currentControlCommand());
   }
