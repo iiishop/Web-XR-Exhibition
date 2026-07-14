@@ -254,7 +254,10 @@ const ui = {
 const state = {
   light: null,
   mode: "colour",
+  powerOverride: null,
   busy: false,
+  commandQueue: Promise.resolve(),
+  queuedCommands: 0,
   board: null,
   boardTexture: null,
   boardZones: {},
@@ -425,9 +428,10 @@ function drawButton(ctx, zone, label, color) {
 
 function render() {
   const light = state.light || {};
-  const brightness = Math.round(getBrightness(light) || ui.brightnessInput.value);
-  const temp = Math.round(light.temperature_percent || 0);
-  const hue = Math.round(light.color?.hue || ui.arcInput.value);
+  const keepLocal = state.queuedCommands > 0 || state.activeControl;
+  const brightness = Math.round(keepLocal ? ui.brightnessInput.value : (getBrightness(light) || ui.brightnessInput.value));
+  const temp = Math.round(keepLocal ? ui.arcInput.value : (light.temperature_percent || 0));
+  const hue = Math.round(keepLocal ? ui.arcInput.value : (light.color?.hue || ui.arcInput.value));
 
   ui.powerPill.textContent = light.power == null ? "unknown" : (light.power ? "on" : "off");
   ui.powerPill.className = `pill ${light.power ? "on" : "off"}`;
@@ -447,10 +451,16 @@ function render() {
   drawBoard();
 }
 
-async function refreshLight() {
+async function refreshLight({ forceSync = false } = {}) {
   try {
-    state.light = await TuyaApi.getLightStatus();
-    state.mode = state.light.mode === "white" ? "white" : "colour";
+    const light = await TuyaApi.getLightStatus();
+    if (forceSync || (state.queuedCommands === 0 && !state.activeControl)) {
+      state.powerOverride = null;
+      state.light = light;
+      state.mode = light.mode === "white" ? "white" : "colour";
+    } else {
+      state.light = state.powerOverride == null ? light : { ...light, power: state.powerOverride };
+    }
     ui.errorText.textContent = "";
   } catch (error) {
     ui.errorText.textContent = error.message;
@@ -459,27 +469,34 @@ async function refreshLight() {
 }
 
 async function runCommand(fn) {
-  if (state.busy) return;
+  state.queuedCommands += 1;
   state.busy = true;
   ui.powerButton.disabled = true;
   ui.modeSwitch.disabled = true;
-  try {
-    await fn();
-    await sleep(600);
-    await refreshLight();
-  } catch (error) {
-    ui.errorText.textContent = error.message;
-  } finally {
-    state.busy = false;
-    ui.powerButton.disabled = false;
-    ui.modeSwitch.disabled = false;
-  }
+  render();
+  state.commandQueue = state.commandQueue.then(async () => {
+    try {
+      await fn();
+      await sleep(600);
+    } catch (error) {
+      ui.errorText.textContent = error.message;
+    } finally {
+      state.queuedCommands -= 1;
+      state.busy = state.queuedCommands > 0;
+      ui.powerButton.disabled = state.busy;
+      ui.modeSwitch.disabled = state.busy;
+      if (state.queuedCommands === 0) await refreshLight({ forceSync: true });
+      else render();
+    }
+  });
+  return state.commandQueue;
 }
 
-function applyCurrentControl() {
+function currentControlCommand() {
   const brightness = Number(ui.brightnessInput.value);
   const arc = Number(ui.arcInput.value);
-  return state.mode === "white"
+  const mode = state.mode;
+  return () => mode === "white"
     ? TuyaApi.setLightWhite(brightness, arc)
     : TuyaApi.setLightColor(arc, 100, brightness);
 }
@@ -504,15 +521,19 @@ function createBoard() {
 ui.arcInput.addEventListener("input", () => {
   ui.arcReadout.textContent = ui.arcInput.value;
 });
-ui.arcInput.addEventListener("change", () => runCommand(applyCurrentControl));
-ui.brightnessInput.addEventListener("change", () => runCommand(applyCurrentControl));
+ui.arcInput.addEventListener("change", () => runCommand(currentControlCommand()));
+ui.brightnessInput.addEventListener("change", () => runCommand(currentControlCommand()));
 ui.modeSwitch.addEventListener("change", () => {
   state.mode = ui.modeSwitch.checked ? "white" : "colour";
   render();
-  runCommand(applyCurrentControl);
+  runCommand(currentControlCommand());
 });
 ui.powerButton.addEventListener("click", () => {
-  runCommand(() => TuyaApi.setLightPower(!state.light?.power));
+  const nextPower = !state.light?.power;
+  state.powerOverride = nextPower;
+  state.light = { ...state.light, power: nextPower };
+  render();
+  runCommand(() => TuyaApi.setLightPower(nextPower));
 });
 
 function valueFromArc(x, y) {
@@ -553,25 +574,29 @@ function setArcFromHit(x, y) {
 function handleBoardHit(x, y, commitContinuous = true) {
   const zones = state.boardZones;
   if (hitZone(zones.power, x, y)) {
-    runCommand(() => TuyaApi.setLightPower(!state.light?.power));
+    const nextPower = !state.light?.power;
+    state.powerOverride = nextPower;
+    state.light = { ...state.light, power: nextPower };
+    render();
+    runCommand(() => TuyaApi.setLightPower(nextPower));
     return;
   }
   if (hitZone(zones.mode, x, y)) {
     state.mode = state.mode === "white" ? "colour" : "white";
     render();
-    runCommand(applyCurrentControl);
+    runCommand(currentControlCommand());
     return;
   }
   if (hitZone(zones.brightness, x, y)) {
     state.activeControl = "brightness";
     setBrightnessFromHit(x);
-    if (commitContinuous) runCommand(applyCurrentControl);
+    if (commitContinuous) runCommand(currentControlCommand());
     return;
   }
   if (hitArc(x, y)) {
     state.activeControl = "arc";
     setArcFromHit(x, y);
-    if (commitContinuous) runCommand(applyCurrentControl);
+    if (commitContinuous) runCommand(currentControlCommand());
   }
 }
 
@@ -613,7 +638,7 @@ function bindRayInteraction(renderer, camera) {
     if (!state.activeControl) return;
     event.preventDefault();
     updateDrag(event);
-    runCommand(applyCurrentControl);
+    runCommand(currentControlCommand());
     state.activeControl = null;
   }, { capture: true, passive: false });
 }
