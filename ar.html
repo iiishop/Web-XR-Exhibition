@@ -472,7 +472,7 @@ function createBoard() {
   const texture = new THREE.CanvasTexture(canvas);
   const board = new THREE.Mesh(
     new THREE.PlaneGeometry(0.54, 0.30),
-    new THREE.MeshBasicMaterial({ map: texture, transparent: true })
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
   board.position.set(0, 0, 0);
   board.userData = { canvas, ctx: canvas.getContext("2d") };
@@ -537,17 +537,23 @@ function handleBoardHit(x, y) {
 }
 
 function bindRayInteraction(renderer, camera) {
-  renderer.domElement.addEventListener("pointerdown", (event) => {
+  const hitPanel = (event) => {
     if (!state.targetVisible || !state.board) return;
+    event.preventDefault();
     const rect = renderer.domElement.getBoundingClientRect();
     state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     state.pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    state.smoothGroup.updateMatrixWorld(true);
+    state.board.updateMatrixWorld(true);
     state.raycaster.setFromCamera(state.pointer, camera);
-    const hit = state.raycaster.intersectObject(state.board)[0];
+    const hit = state.raycaster.intersectObject(state.board, true)[0];
     if (!hit?.uv) return;
     const { canvas } = state.board.userData;
     handleBoardHit(hit.uv.x * canvas.width, (1 - hit.uv.y) * canvas.height);
-  });
+  };
+
+  renderer.domElement.style.touchAction = "none";
+  window.addEventListener("pointerdown", hitPanel, { capture: true, passive: false });
 }
 
 function updateSmoothedAnchor(anchor) {
