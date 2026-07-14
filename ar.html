@@ -4,10 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Light AR Panel</title>
-<script src="//cdn.8thwall.com/web/aframe/8frame-1.5.0.min.js"></script>
-<script src="//cdn.8thwall.com/web/xrextras/xrextras.js"></script>
-<script crossorigin="anonymous" src="./external/runtime/runtime.js"></script>
-<script crossorigin="anonymous" src="./external/xr/xr.js" data-preload-chunks="slam"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 <style>
   :root {
     color-scheme: dark;
@@ -25,6 +29,7 @@
   * { box-sizing: border-box; }
   html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--ink); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   button, input { font: inherit; }
+  #ar-root { position: fixed; inset: 0; }
 
   .hud {
     position: fixed;
@@ -172,13 +177,14 @@
 </style>
 </head>
 <body>
+<div id="ar-root"></div>
 <div id="targetNote" class="target-note">Find reference target</div>
 
 <section class="hud" aria-label="Light controls">
   <div class="head">
     <div>
       <h1 class="title">Light panel</h1>
-      <p class="subtitle">Anchored 10 cm above reference-target</p>
+      <p class="subtitle">MindAR target: center + 10 cm</p>
     </div>
     <div id="powerPill" class="pill">unknown</div>
   </div>
@@ -217,32 +223,10 @@
   <div id="errorText" class="error"></div>
 </section>
 
-<a-scene
-  xrextras-loading
-  xrextras-runtime-error
-  renderer="colorManagement: true"
-  xrweb="disableWorldTracking: true">
-  <a-camera position="0 0 0"></a-camera>
-  <a-entity id="targetAnchor" xrextras-named-image-target="name: reference-target">
-    <a-plane
-      id="arPanel"
-      position="0 0.10 0.02"
-      width="0.34"
-      height="0.18"
-      material="color: #0b1519; opacity: 0.78; transparent: true">
-    </a-plane>
-    <a-text
-      id="arText"
-      position="-0.15 0.12 0.035"
-      value="Light panel"
-      width="0.7"
-      color="#f4fbf7"
-      align="left">
-    </a-text>
-  </a-entity>
-</a-scene>
+<script type="module">
+import * as THREE from "three";
+import { MindARThree } from "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js";
 
-<script>
 const API_KEY = "nKG9DR0Cyef6yK12E2X0ICZkNdp-Ds2d1-HFbzHJ5J4";
 const API_BASE = "https://api.iiishop.top";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -262,14 +246,15 @@ const ui = {
   modeSwitch: document.getElementById("modeSwitch"),
   modeSwitchText: document.getElementById("modeSwitchText"),
   powerButton: document.getElementById("powerButton"),
-  errorText: document.getElementById("errorText"),
-  arText: document.getElementById("arText")
+  errorText: document.getElementById("errorText")
 };
 
 const state = {
   light: null,
   mode: "colour",
-  busy: false
+  busy: false,
+  board: null,
+  boardTexture: null
 };
 
 async function apiRequest(path, options = {}) {
@@ -308,6 +293,45 @@ function getBrightness(light) {
     : light?.brightness_percent;
 }
 
+function drawBoard() {
+  if (!state.board) return;
+  const { canvas, ctx } = state.board.userData;
+  const light = state.light || {};
+  const brightness = Math.round(getBrightness(light) || ui.brightnessInput.value);
+  const temp = Math.round(light.temperature_percent || 0);
+  const hue = Math.round(light.color?.hue || ui.arcInput.value);
+  const accent = state.mode === "white" ? "#ffd166" : `hsl(${hue} 95% 60%)`;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(7, 16, 19, 0.86)";
+  ctx.roundRect(0, 0, canvas.width, canvas.height, 28);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(210, 236, 228, 0.25)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.arc(74, 112, 38, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "700 34px system-ui, sans-serif";
+  ctx.fillText(`Light ${light.power ? "on" : "off"}`, 130, 72);
+  ctx.font = "600 26px ui-monospace, monospace";
+  ctx.fillText(`${state.mode}  ${brightness}%`, 130, 116);
+  ctx.fillStyle = "#9fb0a8";
+  ctx.font = "22px ui-monospace, monospace";
+  ctx.fillText(`temp ${temp}%   hue ${hue}deg`, 130, 156);
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.arc(520, 160, 76, Math.PI, Math.PI + Math.PI * (brightness / 100));
+  ctx.stroke();
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "700 30px ui-monospace, monospace";
+  ctx.fillText(`${brightness}`, 490, 166);
+  state.boardTexture.needsUpdate = true;
+}
+
 function render() {
   const light = state.light || {};
   const brightness = Math.round(getBrightness(light) || ui.brightnessInput.value);
@@ -330,7 +354,7 @@ function render() {
   ui.modeSwitch.checked = state.mode === "white";
   ui.modeSwitchText.textContent = state.mode === "white" ? "White" : "Colour";
   ui.powerButton.textContent = light.power ? "Turn off" : "Turn on";
-  ui.arText?.setAttribute("value", `Light ${ui.powerPill.textContent}\n${state.mode} ${brightness}%`);
+  drawBoard();
 }
 
 async function refreshLight() {
@@ -370,6 +394,23 @@ function applyCurrentControl() {
     : TuyaApi.setLightColor(arc, 100, brightness);
 }
 
+function createBoard() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 640;
+  canvas.height = 240;
+  const texture = new THREE.CanvasTexture(canvas);
+  const board = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.46, 0.18),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true })
+  );
+  board.position.set(0, 0.10, 0.02);
+  board.userData = { canvas, ctx: canvas.getContext("2d") };
+  state.board = board;
+  state.boardTexture = texture;
+  drawBoard();
+  return board;
+}
+
 ui.arcInput.addEventListener("input", () => {
   ui.arcReadout.textContent = ui.arcInput.value;
 });
@@ -384,15 +425,26 @@ ui.powerButton.addEventListener("click", () => {
   runCommand(() => TuyaApi.setLightPower(!state.light?.power));
 });
 
-document.getElementById("targetAnchor").addEventListener("targetfound", () => {
-  ui.note.textContent = "Reference target locked";
-});
-document.getElementById("targetAnchor").addEventListener("targetlost", () => {
-  ui.note.textContent = "Find reference target";
-});
+async function startAr() {
+  const mindar = new MindARThree({
+    container: document.getElementById("ar-root"),
+    imageTargetSrc: "./targets.mind"
+  });
+  const { renderer, scene, camera } = mindar;
+  const anchor = mindar.addAnchor(0);
+  anchor.group.add(createBoard());
+  anchor.onTargetFound = () => { ui.note.textContent = "Reference target locked"; };
+  anchor.onTargetLost = () => { ui.note.textContent = "Find reference target"; };
+
+  await mindar.start();
+  renderer.setAnimationLoop(() => renderer.render(scene, camera));
+}
 
 refreshLight();
 setInterval(refreshLight, 8000);
+startAr().catch((error) => {
+  ui.note.textContent = `AR error: ${error.message}`;
+});
 </script>
 </body>
 </html>
