@@ -264,7 +264,8 @@ const state = {
   tempQuaternion: new THREE.Quaternion(),
   tempScale: new THREE.Vector3(),
   raycaster: new THREE.Raycaster(),
-  pointer: new THREE.Vector2()
+  pointer: new THREE.Vector2(),
+  activeControl: null
 };
 
 async function apiRequest(path, options = {}) {
@@ -312,10 +313,10 @@ function drawBoard() {
   const hue = Math.round(light.color?.hue || ui.arcInput.value);
   const accent = state.mode === "white" ? "#ffd166" : `hsl(${hue} 95% 60%)`;
   const zones = {
-    mode: { x: 34, y: 332, w: 164, h: 58 },
-    power: { x: 220, y: 332, w: 172, h: 58 },
-    brightness: { x: 455, y: 346, w: 255, h: 28 },
-    arc: { cx: 590, cy: 244, r: 100 }
+    mode: { x: 34, y: 332, w: 164, h: 58, hitX: 18, hitY: 312, hitW: 196, hitH: 96 },
+    power: { x: 220, y: 332, w: 172, h: 58, hitX: 204, hitY: 312, hitW: 206, hitH: 96 },
+    brightness: { x: 455, y: 346, w: 255, h: 28, hitY: 318, hitH: 92 },
+    arc: { cx: 590, cy: 244, r: 100, hitR: 135 }
   };
   state.boardZones = zones;
 
@@ -514,10 +515,33 @@ function valueFromArc(x, y) {
 }
 
 function hitZone(zone, x, y) {
-  return x >= zone.x && x <= zone.x + zone.w && y >= zone.y && y <= zone.y + zone.h;
+  const x0 = zone.hitX ?? zone.x;
+  const y0 = zone.hitY ?? zone.y;
+  const w = zone.hitW ?? zone.w;
+  const h = zone.hitH ?? zone.h;
+  return x >= x0 && x <= x0 + w && y >= y0 && y <= y0 + h;
 }
 
-function handleBoardHit(x, y) {
+function hitArc(x, y) {
+  const arc = state.boardZones.arc;
+  const dx = x - arc.cx;
+  const dy = y - arc.cy;
+  return (dx * dx + dy * dy) <= arc.hitR * arc.hitR && y <= arc.cy + 34;
+}
+
+function setBrightnessFromHit(x) {
+  const zone = state.boardZones.brightness;
+  const ratio = Math.max(0, Math.min(1, (x - zone.x) / zone.w));
+  ui.brightnessInput.value = Math.round(1 + ratio * 99);
+  render();
+}
+
+function setArcFromHit(x, y) {
+  ui.arcInput.value = valueFromArc(x, y);
+  render();
+}
+
+function handleBoardHit(x, y, commitContinuous = true) {
   const zones = state.boardZones;
   if (hitZone(zones.power, x, y)) {
     runCommand(() => TuyaApi.setLightPower(!state.light?.power));
@@ -530,25 +554,21 @@ function handleBoardHit(x, y) {
     return;
   }
   if (hitZone(zones.brightness, x, y)) {
-    const ratio = Math.max(0, Math.min(1, (x - zones.brightness.x) / zones.brightness.w));
-    ui.brightnessInput.value = Math.round(1 + ratio * 99);
-    render();
-    runCommand(applyCurrentControl);
+    state.activeControl = "brightness";
+    setBrightnessFromHit(x);
+    if (commitContinuous) runCommand(applyCurrentControl);
     return;
   }
-  const dx = x - zones.arc.cx;
-  const dy = y - zones.arc.cy;
-  if ((dx * dx + dy * dy) <= zones.arc.r * zones.arc.r && y <= zones.arc.cy + 12) {
-    ui.arcInput.value = valueFromArc(x, y);
-    render();
-    runCommand(applyCurrentControl);
+  if (hitArc(x, y)) {
+    state.activeControl = "arc";
+    setArcFromHit(x, y);
+    if (commitContinuous) runCommand(applyCurrentControl);
   }
 }
 
 function bindRayInteraction(renderer, camera) {
-  const hitPanel = (event) => {
+  const getBoardPoint = (event) => {
     if (!state.panelPlaced || !state.board) return;
-    event.preventDefault();
     const rect = renderer.domElement.getBoundingClientRect();
     state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     state.pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
@@ -558,11 +578,35 @@ function bindRayInteraction(renderer, camera) {
     const hit = state.raycaster.intersectObject(state.board, true)[0];
     if (!hit?.uv) return;
     const { canvas } = state.board.userData;
-    handleBoardHit(hit.uv.x * canvas.width, (1 - hit.uv.y) * canvas.height);
+    return { x: hit.uv.x * canvas.width, y: (1 - hit.uv.y) * canvas.height };
+  };
+  const updateDrag = (event) => {
+    const point = getBoardPoint(event);
+    if (!point) return;
+    if (state.activeControl === "brightness") setBrightnessFromHit(point.x);
+    if (state.activeControl === "arc") setArcFromHit(point.x, point.y);
+  };
+  const hitPanel = (event) => {
+    const point = getBoardPoint(event);
+    if (!point) return;
+    event.preventDefault();
+    handleBoardHit(point.x, point.y, false);
   };
 
   renderer.domElement.style.touchAction = "none";
   window.addEventListener("pointerdown", hitPanel, { capture: true, passive: false });
+  window.addEventListener("pointermove", (event) => {
+    if (!state.activeControl) return;
+    event.preventDefault();
+    updateDrag(event);
+  }, { capture: true, passive: false });
+  window.addEventListener("pointerup", (event) => {
+    if (!state.activeControl) return;
+    event.preventDefault();
+    updateDrag(event);
+    runCommand(applyCurrentControl);
+    state.activeControl = null;
+  }, { capture: true, passive: false });
 }
 
 function updateSmoothedAnchor(anchor) {
