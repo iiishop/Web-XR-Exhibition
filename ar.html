@@ -378,9 +378,11 @@ function drawBoard() {
 
   const track = zones.brightness;
   ctx.fillStyle = "rgba(255,255,255,0.12)";
+  ctx.beginPath();
   ctx.roundRect(track.x, track.y, track.w, track.h, 14);
   ctx.fill();
   ctx.fillStyle = accent;
+  ctx.beginPath();
   ctx.roundRect(track.x, track.y, track.w * brightness / 100, track.h, 14);
   ctx.fill();
   ctx.fillStyle = "#f4fbf7";
@@ -393,15 +395,19 @@ function drawBoard() {
 function drawButton(ctx, zone, label, color) {
   ctx.save();
   ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.beginPath();
   ctx.roundRect(zone.x, zone.y, zone.w, zone.h, 16);
   ctx.fill();
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   ctx.stroke();
   ctx.fillStyle = "#f4fbf7";
-  ctx.font = "700 24px Arial, sans-serif";
+  ctx.font = "800 31px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+  ctx.strokeText(label, zone.x + zone.w / 2, zone.y + zone.h / 2);
   ctx.fillText(label, zone.x + zone.w / 2, zone.y + zone.h / 2);
   ctx.restore();
 }
