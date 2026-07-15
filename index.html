@@ -476,6 +476,8 @@ function rawValue(data, ...keys) {
   for (const key of keys) {
     if (data?.[key] != null) return data[key];
     if (data?.raw?.[key] != null) return data.raw[key];
+    const item = Array.isArray(data?.raw) && data.raw.find((entry) => entry.code === key);
+    if (item?.value != null) return item.value;
   }
   return null;
 }
@@ -494,12 +496,15 @@ function drawOccupancyBoard() {
   const { canvas, ctx } = state.occupancyBoard.userData;
   const data = state.occupancy || {};
   const occupied = data.occupied === true;
-  const lux = rawValue(data, "illuminance_lux", "illuminance", "lux", "bright_value", "brightness");
-  const confirm = rawValue(data, "presence_confirm_time_s", "presence_confirm_time", "presence_time_s", "presence_time", "confirm_time");
-  const absence = rawValue(data, "absence_delay_time_s", "absence_delay_time", "absence_time_s", "absence_time", "fading_time");
-  const closest = data.closest_distance_m ?? (data.raw?.target_dis_closest == null ? null : data.raw.target_dis_closest / 100);
-  const near = data.near_detection_m ?? (data.raw?.near_detection == null ? null : data.raw.near_detection / 100);
-  const far = data.far_detection_m ?? (data.raw?.far_detection == null ? null : data.raw.far_detection / 100);
+  const lux = rawValue(data, "illuminance_lux", "illuminance_value", "illuminance", "lux", "lux_value", "bright_value", "brightness");
+  const confirm = rawValue(data, "presence_confirm_time_s", "presence_confirm_time", "presence_time_s", "presence_time", "confirm_time", "detection_delay", "detection_delay_time", "enter_confirm_time");
+  const absence = rawValue(data, "absence_delay_time_s", "absence_delay_time", "absence_time_s", "absence_time", "fading_time", "none_delay_time", "no_presence_delay", "leave_delay", "target_lost_delay");
+  const closestRaw = rawValue(data, "target_dis_closest", "closest_distance", "closest_distance_cm");
+  const nearRaw = rawValue(data, "near_detection");
+  const farRaw = rawValue(data, "far_detection");
+  const closest = data.closest_distance_m ?? (closestRaw == null ? null : closestRaw / 100);
+  const near = data.near_detection_m ?? (nearRaw == null ? null : nearRaw / 100);
+  const far = data.far_detection_m ?? (farRaw == null ? null : farRaw / 100);
   const rows = [
     ["Illuminance", lux == null ? "-" : `${lux} lx`],
     ["Sensitivity", data.sensitivity ?? "-"],
