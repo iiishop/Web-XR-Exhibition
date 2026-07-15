@@ -499,6 +499,8 @@ function drawOccupancyBoard() {
   const near = data.near_detection_m ?? (nearRaw == null ? null : nearRaw / 100);
   const far = data.far_detection_m ?? (farRaw == null ? null : farRaw / 100);
   const sensitivity = data.sensitivity == null ? null : Number(data.sensitivity);
+  const statusColor = occupied ? "#7ff2b4" : "#ff6b6b";
+  const statusFill = occupied ? "rgba(127, 242, 180, 0.24)" : "rgba(255, 107, 107, 0.22)";
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "rgba(7, 16, 19, 0.86)";
@@ -509,19 +511,26 @@ function drawOccupancyBoard() {
   ctx.lineWidth = 3;
   ctx.stroke();
 
-  ctx.fillStyle = occupied ? "#7ff2b4" : "#8fa3ad";
+  ctx.fillStyle = statusFill;
   ctx.beginPath();
-  ctx.arc(58, 58, 26, 0, Math.PI * 2);
+  ctx.roundRect(26, 24, canvas.width - 52, 96, 22);
+  ctx.fill();
+  ctx.strokeStyle = statusColor;
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = statusColor;
+  ctx.beginPath();
+  ctx.arc(70, 72, 34, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#f4fbf7";
-  ctx.font = "800 34px sans-serif";
-  ctx.fillText(occupied ? "OCCUPIED" : "CLEAR", 104, 58);
+  ctx.font = "900 48px sans-serif";
+  ctx.fillText(occupied ? "OCCUPIED" : "CLEAR", 124, 72);
   ctx.fillStyle = "#9fb0a8";
   ctx.font = "22px ui-monospace, monospace";
-  ctx.fillText(mapCheckingResult(data.checking_result), 104, 92);
+  ctx.fillText(mapCheckingResult(data.checking_result), 126, 104);
   ctx.fillText(state.occupancyUpdatedAt ? `Updated ${state.occupancyUpdatedAt.toLocaleTimeString()}` : "Waiting for data", 44, 410);
 
-  drawRangeBar(ctx, 44, 150, 472, 26, closest, 0, Math.max(far || 6, 1), occupied ? "#7ff2b4" : "#8fa3ad");
+  drawRangeBar(ctx, 44, 150, 472, 26, closest, 0, Math.max(far || 6, 1), statusColor);
   labelValue(ctx, "Target distance", metres(closest), 44, 138, 516);
 
   ctx.fillStyle = "#9fb0a8";
