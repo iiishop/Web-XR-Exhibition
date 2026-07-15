@@ -487,10 +487,6 @@ function metres(value) {
   return `${Number(value).toFixed(2)} m`;
 }
 
-function seconds(value) {
-  return value == null ? "-" : `${Number(value)} s`;
-}
-
 function drawOccupancyBoard() {
   if (!state.occupancyBoard) return;
   const { canvas, ctx } = state.occupancyBoard.userData;
@@ -502,14 +498,7 @@ function drawOccupancyBoard() {
   const closest = data.closest_distance_m ?? (closestRaw == null ? null : closestRaw / 100);
   const near = data.near_detection_m ?? (nearRaw == null ? null : nearRaw / 100);
   const far = data.far_detection_m ?? (farRaw == null ? null : farRaw / 100);
-  const rows = [
-    ["Presence state", data.presence_state ?? rawValue(data, "presence_state") ?? "-"],
-    ["Sensitivity", data.sensitivity ?? "-"],
-    ["Target distance", metres(closest)],
-    ["Nearest range", metres(near)],
-    ["Farthest range", metres(far)],
-    ["Self check", mapCheckingResult(data.checking_result)]
-  ];
+  const sensitivity = data.sensitivity == null ? null : Number(data.sensitivity);
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "rgba(7, 16, 19, 0.86)";
@@ -532,23 +521,56 @@ function drawOccupancyBoard() {
   ctx.fillText(mapCheckingResult(data.checking_result), 104, 92);
   ctx.fillText(state.occupancyUpdatedAt ? `Updated ${state.occupancyUpdatedAt.toLocaleTimeString()}` : "Waiting for data", 44, 410);
 
-  rows.forEach(([label, value], index) => {
-    const y = 145 + index * 38;
-    ctx.fillStyle = "rgba(255,255,255,0.06)";
+  drawRangeBar(ctx, 44, 150, 472, 26, closest, 0, Math.max(far || 6, 1), occupied ? "#7ff2b4" : "#8fa3ad");
+  labelValue(ctx, "Target distance", metres(closest), 44, 138, 516);
+
+  ctx.fillStyle = "#9fb0a8";
+  ctx.font = "20px sans-serif";
+  ctx.fillText("Sensitivity", 44, 222);
+  for (let i = 0; i < 10; i += 1) {
+    ctx.fillStyle = sensitivity != null && i <= sensitivity ? "#7ee7ff" : "rgba(255,255,255,0.10)";
     ctx.beginPath();
-    ctx.roundRect(28, y - 25, canvas.width - 56, 31, 10);
+    ctx.roundRect(44 + i * 47, 238, 34, 32, 8);
     ctx.fill();
-    ctx.fillStyle = "#9fb0a8";
-    ctx.font = "20px sans-serif";
-    ctx.fillText(label, 44, y);
-    ctx.fillStyle = "#f4fbf7";
-    ctx.font = "700 22px ui-monospace, monospace";
-    ctx.textAlign = "right";
-    ctx.fillText(String(value), canvas.width - 44, y);
-    ctx.textAlign = "left";
-  });
+  }
+  labelValue(ctx, "", `${data.sensitivity ?? "-"} / 9`, 44, 222, 516);
+
+  ctx.fillStyle = "#9fb0a8";
+  ctx.font = "20px sans-serif";
+  ctx.fillText("Detection range", 44, 315);
+  drawRangeBar(ctx, 44, 332, 472, 24, null, 0, 10, "#ffd166", near, far);
+  labelValue(ctx, metres(near), metres(far), 44, 382, 516);
 
   state.occupancyTexture.needsUpdate = true;
+}
+
+function labelValue(ctx, label, value, x, y, right) {
+  ctx.fillStyle = "#9fb0a8";
+  ctx.font = "20px sans-serif";
+  if (label) ctx.fillText(label, x, y);
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "800 24px ui-monospace, monospace";
+  ctx.textAlign = "right";
+  ctx.fillText(String(value), right, y);
+  ctx.textAlign = "left";
+}
+
+function drawRangeBar(ctx, x, y, w, h, value, min, max, color, start = min, end = max) {
+  const toX = (v) => x + (clamp(v, min, max) - min) / (max - min) * w;
+  ctx.fillStyle = "rgba(255,255,255,0.10)";
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, h / 2);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(toX(start), y, Math.max(6, toX(end) - toX(start)), h, h / 2);
+  ctx.fill();
+  if (value != null) {
+    ctx.fillStyle = "#f4fbf7";
+    ctx.beginPath();
+    ctx.arc(toX(value), y + h / 2, h * 0.75, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawWeatherBoard() {
