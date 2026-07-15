@@ -230,6 +230,7 @@ import { MindARThree } from "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/min
 
 const API_KEY = "nKG9DR0Cyef6yK12E2X0ICZkNdp-Ds2d1-HFbzHJ5J4";
 const API_BASE = "https://api.iiishop.top";
+const WEATHER_URL = "https://wttr.in/52.1927803,-1.70634?format=j1";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 
@@ -265,6 +266,7 @@ function mapCheckingResult(value) {
 const state = {
   light: null,
   occupancy: null,
+  weather: null,
   mode: "colour",
   powerOverride: null,
   busy: false,
@@ -275,6 +277,8 @@ const state = {
   boardZones: {},
   occupancyBoard: null,
   occupancyTexture: null,
+  weatherBoard: null,
+  weatherTexture: null,
   targetVisible: false,
   panelPlaced: false,
   smoothGroup: null,
@@ -538,6 +542,58 @@ function drawOccupancyBoard() {
   state.occupancyTexture.needsUpdate = true;
 }
 
+function drawWeatherBoard() {
+  if (!state.weatherBoard) return;
+  const { canvas, ctx } = state.weatherBoard.userData;
+  const current = state.weather?.current_condition?.[0] || {};
+  const outdoor = current.temp_C == null ? null : Number(current.temp_C);
+  const indoor = outdoor == null ? null : outdoor + 3;
+  const humidity = current.humidity;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(7, 16, 19, 0.86)";
+  ctx.beginPath();
+  ctx.roundRect(0, 0, canvas.width, canvas.height, 28);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(210, 236, 228, 0.25)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  ctx.fillStyle = "#ffd166";
+  ctx.beginPath();
+  ctx.arc(58, 58, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "800 32px sans-serif";
+  ctx.fillText("ROOM SENSOR", 104, 58);
+  ctx.fillStyle = "#9fb0a8";
+  ctx.font = "20px ui-monospace, monospace";
+  ctx.fillText("Stratford-upon-Avon", 104, 92);
+
+  const rows = [
+    ["Temperature", indoor == null ? "-" : `${indoor.toFixed(1)} C`],
+    ["Humidity", humidity == null ? "-" : `${humidity}%`],
+    ["Source", "wttr.in + 3 C"]
+  ];
+  rows.forEach(([label, value], index) => {
+    const y = 155 + index * 54;
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.beginPath();
+    ctx.roundRect(28, y - 34, canvas.width - 56, 42, 12);
+    ctx.fill();
+    ctx.fillStyle = "#9fb0a8";
+    ctx.font = "22px sans-serif";
+    ctx.fillText(label, 44, y);
+    ctx.fillStyle = "#f4fbf7";
+    ctx.font = "800 28px ui-monospace, monospace";
+    ctx.textAlign = "right";
+    ctx.fillText(String(value), canvas.width - 44, y);
+    ctx.textAlign = "left";
+  });
+
+  state.weatherTexture.needsUpdate = true;
+}
+
 function render() {
   const light = state.light || {};
   const keepLocal = state.queuedCommands > 0 || state.activeControl;
@@ -562,6 +618,7 @@ function render() {
   ui.powerButton.textContent = light.power ? "Turn off" : "Turn on";
   drawBoard();
   drawOccupancyBoard();
+  drawWeatherBoard();
 }
 
 async function refreshLight({ forceSync = false } = {}) {
@@ -588,6 +645,17 @@ async function refreshOccupancy() {
     ui.errorText.textContent = error.message;
   }
   drawOccupancyBoard();
+}
+
+async function refreshWeather() {
+  try {
+    const response = await fetch(WEATHER_URL);
+    if (!response.ok) throw new Error(`Weather request failed: ${response.status}`);
+    state.weather = await response.json();
+  } catch (error) {
+    ui.errorText.textContent = error.message;
+  }
+  drawWeatherBoard();
 }
 
 async function runCommand(fn) {
@@ -654,6 +722,23 @@ function createOccupancyBoard() {
   state.occupancyBoard = board;
   state.occupancyTexture = texture;
   drawOccupancyBoard();
+  return board;
+}
+
+function createWeatherBoard() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 500;
+  canvas.height = 300;
+  const texture = new THREE.CanvasTexture(canvas);
+  const board = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.36, 0.22),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+  );
+  board.position.set(0, 0.32, 0.10);
+  board.userData = { canvas, ctx: canvas.getContext("2d") };
+  state.weatherBoard = board;
+  state.weatherTexture = texture;
+  drawWeatherBoard();
   return board;
 }
 
@@ -799,7 +884,7 @@ function facePanelsToCamera() {
   if (!state.panelPlaced || !state.smoothGroup || !state.camera) return;
   state.smoothGroup.getWorldQuaternion(state.parentQuaternion).invert();
   state.camera.getWorldQuaternion(state.cameraQuaternion);
-  for (const panel of [state.board, state.occupancyBoard]) {
+  for (const panel of [state.board, state.occupancyBoard, state.weatherBoard]) {
     panel?.quaternion.copy(state.parentQuaternion).multiply(state.cameraQuaternion);
   }
 }
@@ -820,6 +905,7 @@ async function startAr() {
   state.smoothGroup.visible = false;
   state.smoothGroup.add(createBoard());
   state.smoothGroup.add(createOccupancyBoard());
+  state.smoothGroup.add(createWeatherBoard());
   scene.add(state.smoothGroup);
   anchor.onTargetFound = () => {
     state.targetVisible = true;
@@ -845,8 +931,10 @@ async function startAr() {
 
 refreshLight();
 refreshOccupancy();
+refreshWeather();
 setInterval(refreshLight, 8000);
 setInterval(refreshOccupancy, 1000);
+setInterval(refreshWeather, 600000);
 startAr().catch((error) => {
   ui.note.textContent = `AR error: ${error.message}`;
 });
