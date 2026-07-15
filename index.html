@@ -496,9 +496,6 @@ function drawOccupancyBoard() {
   const { canvas, ctx } = state.occupancyBoard.userData;
   const data = state.occupancy || {};
   const occupied = data.occupied === true;
-  const lux = rawValue(data, "illuminance_lux", "illuminance_value", "illuminance", "lux", "lux_value", "bright_value", "brightness");
-  const confirm = rawValue(data, "presence_confirm_time_s", "presence_confirm_time", "presence_time_s", "presence_time", "confirm_time", "detection_delay", "detection_delay_time", "enter_confirm_time");
-  const absence = rawValue(data, "absence_delay_time_s", "absence_delay_time", "absence_time_s", "absence_time", "fading_time", "none_delay_time", "no_presence_delay", "leave_delay", "target_lost_delay");
   const closestRaw = rawValue(data, "target_dis_closest", "closest_distance", "closest_distance_cm");
   const nearRaw = rawValue(data, "near_detection");
   const farRaw = rawValue(data, "far_detection");
@@ -506,13 +503,12 @@ function drawOccupancyBoard() {
   const near = data.near_detection_m ?? (nearRaw == null ? null : nearRaw / 100);
   const far = data.far_detection_m ?? (farRaw == null ? null : farRaw / 100);
   const rows = [
-    ["Illuminance", lux == null ? "-" : `${lux} lx`],
+    ["Presence state", data.presence_state ?? rawValue(data, "presence_state") ?? "-"],
     ["Sensitivity", data.sensitivity ?? "-"],
     ["Target distance", metres(closest)],
-    ["Presence confirm", seconds(confirm)],
-    ["Absence delay", seconds(absence)],
     ["Nearest range", metres(near)],
-    ["Farthest range", metres(far)]
+    ["Farthest range", metres(far)],
+    ["Self check", mapCheckingResult(data.checking_result)]
   ];
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
