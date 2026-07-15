@@ -251,8 +251,20 @@ const ui = {
   errorText: document.getElementById("errorText")
 };
 
+function mapCheckingResult(value) {
+  return ({
+    checking: "Checking",
+    check_success: "Normal",
+    check_failure: "Check failed",
+    others: "Unknown",
+    comm_fault: "Communication fault",
+    radar_fault: "Radar fault"
+  })[value] || "Unknown";
+}
+
 const state = {
   light: null,
+  occupancy: null,
   mode: "colour",
   powerOverride: null,
   busy: false,
@@ -261,9 +273,12 @@ const state = {
   board: null,
   boardTexture: null,
   boardZones: {},
+  occupancyBoard: null,
+  occupancyTexture: null,
   targetVisible: false,
   panelPlaced: false,
   smoothGroup: null,
+  camera: null,
   tempPosition: new THREE.Vector3(),
   tempQuaternion: new THREE.Quaternion(),
   tempScale: new THREE.Vector3(),
@@ -290,6 +305,7 @@ async function apiRequest(path, options = {}) {
 
 const TuyaApi = {
   getLightStatus: () => apiRequest("/api/devices/light/status"),
+  getOccupancyStatus: () => apiRequest("/api/devices/occupancy/status"),
   setLightPower: (on) => apiRequest("/api/devices/light/commands", {
     method: "POST",
     body: JSON.stringify({ action: "set_power", on })
@@ -443,6 +459,83 @@ function drawButton(ctx, zone, label, color) {
   ctx.restore();
 }
 
+function rawValue(data, ...keys) {
+  for (const key of keys) {
+    if (data?.[key] != null) return data[key];
+    if (data?.raw?.[key] != null) return data.raw[key];
+  }
+  return null;
+}
+
+function metres(value) {
+  if (value == null) return "-";
+  return `${Number(value).toFixed(2)} m`;
+}
+
+function seconds(value) {
+  return value == null ? "-" : `${Number(value)} s`;
+}
+
+function drawOccupancyBoard() {
+  if (!state.occupancyBoard) return;
+  const { canvas, ctx } = state.occupancyBoard.userData;
+  const data = state.occupancy || {};
+  const occupied = data.occupied === true;
+  const lux = rawValue(data, "illuminance_lux", "illuminance", "lux", "bright_value", "brightness");
+  const confirm = rawValue(data, "presence_confirm_time_s", "presence_confirm_time", "presence_time_s", "presence_time", "confirm_time");
+  const absence = rawValue(data, "absence_delay_time_s", "absence_delay_time", "absence_time_s", "absence_time", "fading_time");
+  const closest = data.closest_distance_m ?? (data.raw?.target_dis_closest == null ? null : data.raw.target_dis_closest / 100);
+  const near = data.near_detection_m ?? (data.raw?.near_detection == null ? null : data.raw.near_detection / 100);
+  const far = data.far_detection_m ?? (data.raw?.far_detection == null ? null : data.raw.far_detection / 100);
+  const rows = [
+    ["Illuminance", lux == null ? "-" : `${lux} lx`],
+    ["Sensitivity", data.sensitivity ?? "-"],
+    ["Target distance", metres(closest)],
+    ["Presence confirm", seconds(confirm)],
+    ["Absence delay", seconds(absence)],
+    ["Nearest range", metres(near)],
+    ["Farthest range", metres(far)]
+  ];
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(7, 16, 19, 0.86)";
+  ctx.beginPath();
+  ctx.roundRect(0, 0, canvas.width, canvas.height, 28);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(210, 236, 228, 0.25)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  ctx.fillStyle = occupied ? "#7ff2b4" : "#8fa3ad";
+  ctx.beginPath();
+  ctx.arc(58, 58, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f4fbf7";
+  ctx.font = "800 34px sans-serif";
+  ctx.fillText(occupied ? "OCCUPIED" : "CLEAR", 104, 58);
+  ctx.fillStyle = "#9fb0a8";
+  ctx.font = "22px ui-monospace, monospace";
+  ctx.fillText(mapCheckingResult(data.checking_result), 104, 92);
+
+  rows.forEach(([label, value], index) => {
+    const y = 145 + index * 38;
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.beginPath();
+    ctx.roundRect(28, y - 25, canvas.width - 56, 31, 10);
+    ctx.fill();
+    ctx.fillStyle = "#9fb0a8";
+    ctx.font = "20px sans-serif";
+    ctx.fillText(label, 44, y);
+    ctx.fillStyle = "#f4fbf7";
+    ctx.font = "700 22px ui-monospace, monospace";
+    ctx.textAlign = "right";
+    ctx.fillText(String(value), canvas.width - 44, y);
+    ctx.textAlign = "left";
+  });
+
+  state.occupancyTexture.needsUpdate = true;
+}
+
 function render() {
   const light = state.light || {};
   const keepLocal = state.queuedCommands > 0 || state.activeControl;
@@ -466,6 +559,7 @@ function render() {
   ui.modeSwitchText.textContent = state.mode === "white" ? "White" : "Colour";
   ui.powerButton.textContent = light.power ? "Turn off" : "Turn on";
   drawBoard();
+  drawOccupancyBoard();
 }
 
 async function refreshLight({ forceSync = false } = {}) {
@@ -483,6 +577,15 @@ async function refreshLight({ forceSync = false } = {}) {
     ui.errorText.textContent = error.message;
   }
   render();
+}
+
+async function refreshOccupancy() {
+  try {
+    state.occupancy = await TuyaApi.getOccupancyStatus();
+  } catch (error) {
+    ui.errorText.textContent = error.message;
+  }
+  drawOccupancyBoard();
 }
 
 async function runCommand(fn) {
@@ -532,6 +635,23 @@ function createBoard() {
   state.board = board;
   state.boardTexture = texture;
   drawBoard();
+  return board;
+}
+
+function createOccupancyBoard() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 560;
+  canvas.height = 430;
+  const texture = new THREE.CanvasTexture(canvas);
+  const board = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.40, 0.31),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+  );
+  board.position.set(0.54, 0, 0);
+  board.userData = { canvas, ctx: canvas.getContext("2d") };
+  state.occupancyBoard = board;
+  state.occupancyTexture = texture;
+  drawOccupancyBoard();
   return board;
 }
 
@@ -685,11 +805,13 @@ async function startAr() {
     missTolerance: 5
   });
   const { renderer, scene, camera } = mindar;
+  state.camera = camera;
   const anchor = mindar.addAnchor(0);
   state.smoothGroup = new THREE.Group();
   state.smoothGroup.position.set(0, 0.10, 0.02);
   state.smoothGroup.visible = false;
   state.smoothGroup.add(createBoard());
+  state.smoothGroup.add(createOccupancyBoard());
   scene.add(state.smoothGroup);
   anchor.onTargetFound = () => {
     state.targetVisible = true;
@@ -715,7 +837,9 @@ async function startAr() {
 }
 
 refreshLight();
+refreshOccupancy();
 setInterval(refreshLight, 8000);
+setInterval(refreshOccupancy, 3500);
 startAr().catch((error) => {
   ui.note.textContent = `AR error: ${error.message}`;
 });
