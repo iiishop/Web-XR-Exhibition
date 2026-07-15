@@ -282,6 +282,8 @@ const state = {
   tempPosition: new THREE.Vector3(),
   tempQuaternion: new THREE.Quaternion(),
   tempScale: new THREE.Vector3(),
+  parentQuaternion: new THREE.Quaternion(),
+  cameraQuaternion: new THREE.Quaternion(),
   raycaster: new THREE.Raycaster(),
   pointer: new THREE.Vector2(),
   activeControl: null,
@@ -630,7 +632,7 @@ function createBoard() {
     new THREE.PlaneGeometry(0.54, 0.30),
     new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
-  board.position.set(0, 0, 0);
+  board.position.set(-0.25, 0, 0.10);
   board.userData = { canvas, ctx: canvas.getContext("2d") };
   state.board = board;
   state.boardTexture = texture;
@@ -647,7 +649,7 @@ function createOccupancyBoard() {
     new THREE.PlaneGeometry(0.40, 0.31),
     new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
-  board.position.set(0.54, 0, 0);
+  board.position.set(0.25, 0, 0.10);
   board.userData = { canvas, ctx: canvas.getContext("2d") };
   state.occupancyBoard = board;
   state.occupancyTexture = texture;
@@ -788,11 +790,18 @@ function updateSmoothedAnchor(anchor) {
   if (!state.targetVisible || !state.smoothGroup) return;
   anchor.group.updateMatrixWorld(true);
   anchor.group.matrixWorld.decompose(state.tempPosition, state.tempQuaternion, state.tempScale);
-  state.tempPosition.y += 0.10;
-  state.tempPosition.z += 0.02;
   state.smoothGroup.position.lerp(state.tempPosition, 0.18);
   state.smoothGroup.quaternion.slerp(state.tempQuaternion, 0.18);
   state.smoothGroup.scale.lerp(state.tempScale, 0.18);
+}
+
+function facePanelsToCamera() {
+  if (!state.panelPlaced || !state.smoothGroup || !state.camera) return;
+  state.smoothGroup.getWorldQuaternion(state.parentQuaternion).invert();
+  state.camera.getWorldQuaternion(state.cameraQuaternion);
+  for (const panel of [state.board, state.occupancyBoard]) {
+    panel?.quaternion.copy(state.parentQuaternion).multiply(state.cameraQuaternion);
+  }
 }
 
 async function startAr() {
@@ -808,7 +817,6 @@ async function startAr() {
   state.camera = camera;
   const anchor = mindar.addAnchor(0);
   state.smoothGroup = new THREE.Group();
-  state.smoothGroup.position.set(0, 0.10, 0.02);
   state.smoothGroup.visible = false;
   state.smoothGroup.add(createBoard());
   state.smoothGroup.add(createOccupancyBoard());
@@ -819,8 +827,6 @@ async function startAr() {
     state.smoothGroup.visible = true;
     anchor.group.updateMatrixWorld(true);
     anchor.group.matrixWorld.decompose(state.smoothGroup.position, state.smoothGroup.quaternion, state.smoothGroup.scale);
-    state.smoothGroup.position.y += 0.10;
-    state.smoothGroup.position.z += 0.02;
     ui.note.textContent = "Tap the AR panel";
   };
   anchor.onTargetLost = () => {
@@ -832,6 +838,7 @@ async function startAr() {
   bindRayInteraction(renderer, camera);
   renderer.setAnimationLoop(() => {
     updateSmoothedAnchor(anchor);
+    facePanelsToCamera();
     renderer.render(scene, camera);
   });
 }
