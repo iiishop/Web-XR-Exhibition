@@ -266,7 +266,9 @@ function mapCheckingResult(value) {
 const state = {
   light: null,
   occupancy: null,
+  occupancyUpdatedAt: null,
   weather: null,
+  weatherUpdatedAt: null,
   mode: "colour",
   powerOverride: null,
   busy: false,
@@ -291,13 +293,18 @@ const state = {
   raycaster: new THREE.Raycaster(),
   pointer: new THREE.Vector2(),
   activeControl: null,
+  controlCommitTimer: null,
+  lastQueuedControlKey: "",
   dragStartX: 0,
   dragStartValue: 0
 };
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const url = new URL(`${API_BASE}${path}`);
+  if (!options.body) url.searchParams.set("_", Date.now());
+  const response = await fetch(url, {
     ...options,
+    cache: "no-store",
     headers: {
       "X-API-Key": API_KEY,
       ...(options.body ? { "Content-Type": "application/json" } : {})
@@ -522,6 +529,7 @@ function drawOccupancyBoard() {
   ctx.fillStyle = "#9fb0a8";
   ctx.font = "22px ui-monospace, monospace";
   ctx.fillText(mapCheckingResult(data.checking_result), 104, 92);
+  ctx.fillText(state.occupancyUpdatedAt ? `Updated ${state.occupancyUpdatedAt.toLocaleTimeString()}` : "Waiting for data", 44, 410);
 
   rows.forEach(([label, value], index) => {
     const y = 145 + index * 38;
@@ -569,6 +577,7 @@ function drawWeatherBoard() {
   ctx.fillStyle = "#9fb0a8";
   ctx.font = "20px ui-monospace, monospace";
   ctx.fillText("Stratford-upon-Avon", 104, 92);
+  ctx.fillText(state.weatherUpdatedAt ? `Updated ${state.weatherUpdatedAt.toLocaleTimeString()}` : "Waiting for data", 44, 270);
 
   const rows = [
     ["Temperature", indoor == null ? "-" : `${indoor.toFixed(1)} C`],
@@ -640,6 +649,7 @@ async function refreshLight({ forceSync = false } = {}) {
 async function refreshOccupancy() {
   try {
     state.occupancy = await TuyaApi.getOccupancyStatus();
+    state.occupancyUpdatedAt = new Date();
   } catch (error) {
     ui.errorText.textContent = error.message;
   }
@@ -648,9 +658,12 @@ async function refreshOccupancy() {
 
 async function refreshWeather() {
   try {
-    const response = await fetch(WEATHER_URL);
+    const url = new URL(WEATHER_URL);
+    url.searchParams.set("_", Date.now());
+    const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) throw new Error(`Weather request failed: ${response.status}`);
     state.weather = await response.json();
+    state.weatherUpdatedAt = new Date();
   } catch (error) {
     ui.errorText.textContent = error.message;
   }
@@ -688,6 +701,18 @@ function currentControlCommand() {
   return () => mode === "white"
     ? TuyaApi.setLightWhite(brightness, arc)
     : TuyaApi.setLightColor(arc, 100, brightness);
+}
+
+function queueCurrentControlCommand() {
+  const key = `${state.mode}:${ui.brightnessInput.value}:${ui.arcInput.value}`;
+  if (key === state.lastQueuedControlKey) return;
+  state.lastQueuedControlKey = key;
+  runCommand(currentControlCommand());
+}
+
+function scheduleControlCommit() {
+  clearTimeout(state.controlCommitTimer);
+  state.controlCommitTimer = setTimeout(queueCurrentControlCommand, 300);
 }
 
 function createBoard() {
@@ -759,14 +784,6 @@ ui.powerButton.addEventListener("click", () => {
   runCommand(() => TuyaApi.setLightPower(nextPower));
 });
 
-function valueFromArc(x, y) {
-  const arc = state.boardZones.arc;
-  const angle = Math.atan2(arc.cy - y, x - arc.cx);
-  const clamped = Math.max(0, Math.min(Math.PI, angle));
-  const ratio = 1 - clamped / Math.PI;
-  return Math.round(ratio * Number(ui.arcInput.max));
-}
-
 function hitZone(zone, x, y) {
   const x0 = zone.hitX ?? zone.x;
   const y0 = zone.hitY ?? zone.y;
@@ -777,9 +794,7 @@ function hitZone(zone, x, y) {
 
 function hitArc(x, y) {
   const arc = state.boardZones.arc;
-  const dx = x - arc.cx;
-  const dy = y - arc.cy;
-  return (dx * dx + dy * dy) <= arc.hitR * arc.hitR && y <= arc.cy + 34;
+  return x >= arc.cx - arc.hitR && x <= arc.cx + arc.hitR && y >= arc.cy - arc.hitR - 28 && y <= arc.cy + 52;
 }
 
 function setBrightnessFromHit(x) {
@@ -787,6 +802,7 @@ function setBrightnessFromHit(x) {
   const ratio = Math.max(0, Math.min(1, (x - zone.x) / zone.w));
   ui.brightnessInput.value = Math.round(1 + ratio * 99);
   render();
+  scheduleControlCommit();
 }
 
 function setArcFromHit(x, y) {
@@ -794,6 +810,7 @@ function setArcFromHit(x, y) {
   const next = state.dragStartValue - (x - state.dragStartX) * max / 260;
   ui.arcInput.value = Math.round(state.mode === "white" ? clamp(next, 0, max) : (next % max + max) % max);
   render();
+  scheduleControlCommit();
 }
 
 function handleBoardHit(x, y, commitContinuous = true) {
@@ -815,7 +832,7 @@ function handleBoardHit(x, y, commitContinuous = true) {
   if (hitZone(zones.brightness, x, y)) {
     state.activeControl = "brightness";
     setBrightnessFromHit(x);
-    if (commitContinuous) runCommand(currentControlCommand());
+    if (commitContinuous) queueCurrentControlCommand();
     return;
   }
   if (hitArc(x, y)) {
@@ -823,7 +840,7 @@ function handleBoardHit(x, y, commitContinuous = true) {
     state.dragStartX = x;
     state.dragStartValue = Number(ui.arcInput.value);
     setArcFromHit(x, y);
-    if (commitContinuous) runCommand(currentControlCommand());
+    if (commitContinuous) queueCurrentControlCommand();
   }
 }
 
@@ -843,14 +860,16 @@ function bindRayInteraction(renderer, camera) {
   };
   const updateDrag = (event) => {
     const point = getBoardPoint(event);
-    if (!point) return;
+    if (!point) return false;
     if (state.activeControl === "brightness") setBrightnessFromHit(point.x);
     if (state.activeControl === "arc") setArcFromHit(point.x, point.y);
+    return true;
   };
   const hitPanel = (event) => {
     const point = getBoardPoint(event);
     if (!point) return;
     event.preventDefault();
+    renderer.domElement.setPointerCapture?.(event.pointerId);
     handleBoardHit(point.x, point.y, false);
   };
 
@@ -865,7 +884,14 @@ function bindRayInteraction(renderer, camera) {
     if (!state.activeControl) return;
     event.preventDefault();
     updateDrag(event);
-    runCommand(currentControlCommand());
+    clearTimeout(state.controlCommitTimer);
+    queueCurrentControlCommand();
+    state.activeControl = null;
+  }, { capture: true, passive: false });
+  window.addEventListener("pointercancel", () => {
+    if (!state.activeControl) return;
+    clearTimeout(state.controlCommitTimer);
+    queueCurrentControlCommand();
     state.activeControl = null;
   }, { capture: true, passive: false });
 }
