@@ -839,7 +839,7 @@ async function startAr() {
 refreshLight();
 refreshOccupancy();
 setInterval(refreshLight, 8000);
-setInterval(refreshOccupancy, 3500);
+setInterval(refreshOccupancy, 1000);
 startAr().catch((error) => {
   ui.note.textContent = `AR error: ${error.message}`;
 });
