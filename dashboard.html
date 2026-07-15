@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>WebAR Exhibition</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #080a0d;
+    --panel: rgba(18, 23, 28, 0.88);
+    --panel-solid: #12171c;
+    --line: rgba(255, 255, 255, 0.16);
+    --text: #f2f7f4;
+    --muted: #9ba8a3;
+    --good: #55f0a6;
+    --warn: #ffc857;
+    --bad: #ff6b6b;
+    --accent: #67d5ff;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  button, input, select { font: inherit; }
+  button { border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: #1a2229; padding: 10px 12px; cursor: pointer; }
+  button:hover { border-color: rgba(255, 255, 255, 0.34); }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  input[type="text"] { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: #0b1014; padding: 10px 12px; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+  #container { position: fixed; inset: 0; pointer-events: none; }
+  #loading {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 20; color: var(--text); background: rgba(0, 0, 0, 0.58); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px 14px; font-size: 14px;
+  }
+  #status {
+    position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+    z-index: 20; color: var(--good); background: rgba(0, 0, 0, 0.58); border: 1px solid var(--line);
+    border-radius: 999px; padding: 8px 12px; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; text-align: center;
+  }
+
+  #app {
+    position: fixed; top: 14px; left: 14px; right: 14px; z-index: 30; display: grid; gap: 12px;
+    pointer-events: none;
+  }
+  .topbar, .device-panel { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; backdrop-filter: blur(16px); }
+  .topbar { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 8px; padding: 10px; align-items: end; }
+  .health { min-width: 86px; color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .health.ok { color: var(--good); }
+  .health.bad { color: var(--bad); }
+  .devices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 860px; }
+  .device-panel { padding: 14px; display: grid; gap: 12px; }
+  .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .title { margin: 0; font-size: 16px; letter-spacing: 0; }
+  .subtitle { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .pill.on, .pill.ok { color: var(--good); }
+  .pill.off, .pill.bad { color: var(--bad); }
+  .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .metric { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: rgba(255, 255, 255, 0.04); min-height: 66px; }
+  .metric span { display: block; color: var(--muted); font-size: 11px; }
+  .metric strong { display: block; margin-top: 5px; font-size: 20px; overflow-wrap: anywhere; }
+  .controls { display: grid; gap: 10px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .swatch { min-height: 36px; padding: 0; }
+  .error { color: var(--bad); font-size: 12px; min-height: 16px; }
+
+  @media (max-width: 760px) {
+    #app { top: 10px; left: 10px; right: 10px; max-height: calc(100dvh - 76px); overflow: auto; }
+    .topbar, .devices { grid-template-columns: 1fr; }
+    .devices { max-width: none; }
+    .row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="loading">Loading WebAR...</div>
+  <div id="status">Set Bridge URL, then point at the target</div>
+</div>
+
+<main id="app">
+  <section class="topbar" aria-label="Bridge settings">
+    <label>Bridge URL
+      <input id="apiBase" type="text" inputmode="url" autocomplete="url" placeholder="https://api.iiishop.top">
+    </label>
+    <button id="saveApi" type="button">Save</button>
+    <div id="health" class="health">health: unknown</div>
+  </section>
+  <section id="devices" class="devices" aria-label="Device controls"></section>
+</main>
+
+<script>
+const API_KEY = "nKG9DR0Cyef6yK12E2X0ICZkNdp-Ds2d1-HFbzHJ5J4";
+const API_BASE_KEY = "tuyaBridgeApiBase";
+const DEFAULT_API_BASE = "https://api.iiishop.top";
+const LEGACY_API_BASE = "http://124.223.57.30:8000";
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function getApiBase() {
+  const saved = (localStorage.getItem(API_BASE_KEY) || "").replace(/\/+$/, "");
+  return saved && saved !== LEGACY_API_BASE ? saved : DEFAULT_API_BASE;
+}
+
+function assertSecureApiBase(base) {
+  if (location.protocol === "https:" && base.startsWith("http://")) {
+    throw Object.assign(new Error("Bridge needs HTTPS for GitHub Pages."), { status: 0 });
+  }
+}
+
+async function apiRequest(path, options = {}) {
+  const base = getApiBase();
+  if (!base) throw Object.assign(new Error("Set the Bridge URL first."), { status: 0 });
+  assertSecureApiBase(base);
+
+  const response = await fetch(`${base}${path}`, {
+    ...options,
+    headers: {
+      "X-API-Key": API_KEY,
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {})
+    }
+  });
+
+  let data = null;
+  try { data = await response.json(); } catch { data = null; }
+  if (!response.ok) {
+    throw Object.assign(new Error(getFriendlyError(response.status)), { status: response.status, data });
+  }
+  return data;
+}
+
+function getFriendlyError(status) {
+  if (status === 0) return "Set the Bridge URL first.";
+  if (status === 401) return "Access denied.";
+  if (status === 422) return "Invalid control parameters.";
+  if (status === 502) return "Device cloud service unavailable.";
+  return "Request failed.";
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, Number(value) || 0));
+}
+
+function mapCheckingResult(value) {
+  return ({
+    checking: "Checking",
+    check_success: "Normal",
+    check_failure: "Check failed",
+    others: "Unknown",
+    comm_fault: "Communication fault",
+    radar_fault: "Radar fault"
+  })[value] || "Unknown";
+}
+
+const TuyaApi = {
+  health: () => {
+    const base = getApiBase();
+    assertSecureApiBase(base);
+    return fetch(`${base}/health`).then((r) => r.json());
+  },
+  getLightStatus: () => apiRequest("/api/devices/light/status"),
+  getOccupancyStatus: () => apiRequest("/api/devices/occupancy/status"),
+  setLightPower: (on) => apiRequest("/api/devices/light/commands", {
+    method: "POST",
+    body: JSON.stringify({ action: "set_power", on })
+  }),
+  setLightWhite: (brightnessPercent, temperaturePercent) => apiRequest("/api/devices/light/commands", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "set_white",
+      brightness_percent: clamp(brightnessPercent, 1, 100),
+      temperature_percent: clamp(temperaturePercent, 0, 100)
+    })
+  }),
+  setLightColor: (hue, saturationPercent, brightnessPercent) => apiRequest("/api/devices/light/commands", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "set_color",
+      hue: clamp(hue, 0, 360),
+      saturation_percent: clamp(saturationPercent, 0, 100),
+      brightness_percent: clamp(brightnessPercent, 1, 100)
+    })
+  }),
+  setOccupancySensitivity: (sensitivity) => apiRequest("/api/devices/occupancy/commands", {
+    method: "POST",
+    body: JSON.stringify({ action: "set_sensitivity", sensitivity: clamp(sensitivity, 0, 9) })
+  }),
+  setOccupancyDetectionRange: (nearMetres, farMetres) => apiRequest("/api/devices/occupancy/commands", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "set_detection_range",
+      near_m: clamp(nearMetres, 0, 10),
+      far_m: Math.max(clamp(nearMetres, 0, 10), clamp(farMetres, 0, 10))
+    })
+  })
+};
+
+class DeviceCard {
+  constructor(device) {
+    this.device = device;
+    this.state = null;
+    this.error = "";
+    this.busy = false;
+    this.board = null;
+    this.el = document.createElement("article");
+    this.el.className = "device-panel";
+    this.el.innerHTML = device.template();
+    this.bind();
+  }
+
+  bind() {
+    this.el.querySelector("[data-refresh]").addEventListener("click", () => this.refresh());
+    this.device.bind?.(this);
+  }
+
+  async refresh() {
+    try {
+      this.error = "";
+      this.state = await this.device.read();
+    } catch (error) {
+      this.error = error.message || "Request failed.";
+    }
+    this.render();
+  }
+
+  async command(fn) {
+    if (this.busy) return;
+    this.busy = true;
+    this.render();
+    try {
+      await fn();
+      await sleep(600);
+      await this.refresh();
+    } catch (error) {
+      this.error = error.message || "Command failed.";
+      this.render();
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  render() {
+    this.device.render(this);
+    const error = this.el.querySelector("[data-error]");
+    if (error) error.textContent = this.error;
+    this.el.querySelectorAll("button, input").forEach((control) => {
+      if (!control.matches("#apiBase")) control.disabled = this.busy;
+    });
+  }
+}
+
+const lightDevice = {
+  id: "light",
+  pollMs: 8000,
+  title: "Smart light",
+  read: TuyaApi.getLightStatus,
+  template: () => `
+    <div class="panel-head">
+      <div><h2 class="title">Smart light</h2><p class="subtitle">Power, white mode, HSV colour</p></div>
+      <span class="pill" data-power>unknown</span>
+    </div>
+    <div class="metrics">
+      <div class="metric"><span>Mode</span><strong data-mode>-</strong></div>
+      <div class="metric"><span>Brightness</span><strong data-brightness>-</strong></div>
+      <div class="metric"><span>Temperature</span><strong data-temp>-</strong></div>
+      <div class="metric"><span>Hue</span><strong data-hue>-</strong></div>
+    </div>
+    <div class="controls">
+      <div class="row"><button data-on type="button">Turn on</button><button data-off type="button">Turn off</button></div>
+      <label>White brightness <input data-white-brightness type="range" min="1" max="100" value="70"></label>
+      <label>Warm to cool <input data-temperature type="range" min="0" max="100" value="40"></label>
+      <button data-white type="button">Apply white</button>
+      <label>Hue <input data-color-hue type="range" min="0" max="360" value="240"></label>
+      <label>Saturation <input data-color-saturation type="range" min="0" max="100" value="100"></label>
+      <label>Colour brightness <input data-color-brightness type="range" min="1" max="100" value="80"></label>
+      <div class="swatches">
+        <button class="swatch" data-color="0,100,100" style="background:#f04444" aria-label="Red"></button>
+        <button class="swatch" data-color="120,100,100" style="background:#37d267" aria-label="Green"></button>
+        <button class="swatch" data-color="240,100,100" style="background:#4387ff" aria-label="Blue"></button>
+        <button class="swatch" data-color="285,85,80" style="background:#b05cff" aria-label="Purple"></button>
+      </div>
+      <button data-color-apply type="button">Apply colour</button>
+      <button data-refresh type="button">Refresh light</button>
+      <div class="error" data-error></div>
+    </div>`,
+  bind(card) {
+    const q = (selector) => card.el.querySelector(selector);
+    q("[data-on]").addEventListener("click", () => card.command(() => TuyaApi.setLightPower(true)));
+    q("[data-off]").addEventListener("click", () => card.command(() => TuyaApi.setLightPower(false)));
+    q("[data-white]").addEventListener("click", () => card.command(() => TuyaApi.setLightWhite(q("[data-white-brightness]").value, q("[data-temperature]").value)));
+    q("[data-color-apply]").addEventListener("click", () => card.command(() => TuyaApi.setLightColor(q("[data-color-hue]").value, q("[data-color-saturation]").value, q("[data-color-brightness]").value)));
+    card.el.querySelectorAll("[data-color]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const [hue, saturation, brightness] = button.dataset.color.split(",");
+        q("[data-color-hue]").value = hue;
+        q("[data-color-saturation]").value = saturation;
+        q("[data-color-brightness]").value = brightness;
+        card.command(() => TuyaApi.setLightColor(hue, saturation, brightness));
+      });
+    });
+  },
+  render(card) {
+    const state = card.state || {};
+    const isColour = state.mode === "colour";
+    const brightness = isColour ? state.color?.brightness_percent : state.brightness_percent;
+    const power = card.el.querySelector("[data-power]");
+    power.textContent = state.power == null ? "unknown" : (state.power ? "on" : "off");
+    power.className = `pill ${state.power ? "on" : "off"}`;
+    card.el.querySelector("[data-mode]").textContent = state.mode || "-";
+    card.el.querySelector("[data-brightness]").textContent = brightness == null ? "-" : `${Math.round(brightness)}%`;
+    card.el.querySelector("[data-temp]").textContent = state.temperature_percent == null ? "-" : `${Math.round(state.temperature_percent)}%`;
+    card.el.querySelector("[data-hue]").textContent = state.color?.hue == null ? "-" : `${Math.round(state.color.hue)}deg`;
+  }
+};
+
+const occupancyDevice = {
+  id: "occupancy",
+  pollMs: 3500,
+  title: "Presence sensor",
+  read: TuyaApi.getOccupancyStatus,
+  template: () => `
+    <div class="panel-head">
+      <div><h2 class="title">Presence sensor</h2><p class="subtitle">Presence, range, sensitivity</p></div>
+      <span class="pill" data-occupied>unknown</span>
+    </div>
+    <div class="metrics">
+      <div class="metric"><span>Distance</span><strong data-distance>-</strong></div>
+      <div class="metric"><span>Self check</span><strong data-check>-</strong></div>
+      <div class="metric"><span>Sensitivity</span><strong data-sensitivity>-</strong></div>
+      <div class="metric"><span>Range</span><strong data-range>-</strong></div>
+    </div>
+    <div class="controls">
+      <label>Sensitivity <input data-sensitivity-input type="range" min="0" max="9" value="7"></label>
+      <button data-set-sensitivity type="button">Apply sensitivity</button>
+      <div class="row">
+        <label>Near metres <input data-near type="range" min="0" max="10" step="0.1" value="0.6"></label>
+        <label>Far metres <input data-far type="range" min="0" max="10" step="0.1" value="6"></label>
+      </div>
+      <button data-set-range type="button">Apply range</button>
+      <button data-refresh type="button">Refresh sensor</button>
+      <div class="error" data-error></div>
+    </div>`,
+  bind(card) {
+    const q = (selector) => card.el.querySelector(selector);
+    q("[data-set-sensitivity]").addEventListener("click", () => card.command(() => TuyaApi.setOccupancySensitivity(q("[data-sensitivity-input]").value)));
+    q("[data-set-range]").addEventListener("click", () => card.command(() => TuyaApi.setOccupancyDetectionRange(q("[data-near]").value, q("[data-far]").value)));
+  },
+  render(card) {
+    const state = card.state || {};
+    const occupied = card.el.querySelector("[data-occupied]");
+    occupied.textContent = state.occupied == null ? "unknown" : (state.occupied ? "occupied" : "empty");
+    occupied.className = `pill ${state.occupied ? "ok" : "off"}`;
+    card.el.querySelector("[data-distance]").textContent = state.closest_distance_m == null ? "-" : `${state.closest_distance_m.toFixed(2)} m`;
+    card.el.querySelector("[data-check]").textContent = mapCheckingResult(state.checking_result);
+    card.el.querySelector("[data-sensitivity]").textContent = state.sensitivity ?? "-";
+    card.el.querySelector("[data-range]").textContent = state.near_detection_m == null || state.far_detection_m == null ? "-" : `${state.near_detection_m}-${state.far_detection_m} m`;
+    if (state.sensitivity != null) card.el.querySelector("[data-sensitivity-input]").value = state.sensitivity;
+    if (state.near_detection_m != null) card.el.querySelector("[data-near]").value = state.near_detection_m;
+    if (state.far_detection_m != null) card.el.querySelector("[data-far]").value = state.far_detection_m;
+  }
+};
+
+const cards = [lightDevice, occupancyDevice].map((device) => new DeviceCard(device));
+const devicesEl = document.getElementById("devices");
+cards.forEach((card) => devicesEl.appendChild(card.el));
+
+const apiBaseInput = document.getElementById("apiBase");
+const healthEl = document.getElementById("health");
+apiBaseInput.value = getApiBase();
+document.getElementById("saveApi").addEventListener("click", async () => {
+  localStorage.setItem(API_BASE_KEY, apiBaseInput.value.trim().replace(/\/+$/, ""));
+  await refreshHealth();
+  cards.forEach((card) => card.refresh());
+});
+
+async function refreshHealth() {
+  if (!getApiBase()) {
+    healthEl.textContent = "health: no url";
+    healthEl.className = "health bad";
+    return;
+  }
+  try {
+    const data = await TuyaApi.health();
+    healthEl.textContent = `health: ${data.status || "ok"}`;
+    healthEl.className = "health ok";
+  } catch {
+    healthEl.textContent = "health: failed";
+    healthEl.className = "health bad";
+  }
+}
+
+async function startPolling() {
+  await refreshHealth();
+  cards.forEach((card) => {
+    card.refresh();
+    setInterval(() => card.refresh(), card.device.pollMs);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  const loading = document.getElementById("loading");
+  const status = document.getElementById("status");
+
+  loading.style.display = "none";
+  status.textContent = "Dashboard active";
+  startPolling();
+});
+</script>
+</body>
+</html>
