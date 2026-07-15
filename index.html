@@ -699,7 +699,7 @@ function createBoard() {
     new THREE.PlaneGeometry(0.54, 0.30),
     new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
-  board.position.set(-0.25, 0, 0.10);
+  board.position.set(-0.76, 0, 0.10);
   board.userData = { canvas, ctx: canvas.getContext("2d") };
   state.board = board;
   state.boardTexture = texture;
@@ -716,7 +716,7 @@ function createOccupancyBoard() {
     new THREE.PlaneGeometry(0.40, 0.31),
     new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
-  board.position.set(0.25, 0, 0.10);
+  board.position.set(0, -0.96, 0.10);
   board.userData = { canvas, ctx: canvas.getContext("2d") };
   state.occupancyBoard = board;
   state.occupancyTexture = texture;
@@ -733,7 +733,7 @@ function createWeatherBoard() {
     new THREE.PlaneGeometry(0.36, 0.22),
     new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
-  board.position.set(0, 0.32, 0.10);
+  board.position.set(0.76, 0, 0.10);
   board.userData = { canvas, ctx: canvas.getContext("2d") };
   state.weatherBoard = board;
   state.weatherTexture = texture;
