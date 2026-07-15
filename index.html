@@ -267,7 +267,6 @@ const state = {
   light: null,
   occupancy: null,
   occupancyUpdatedAt: null,
-  occupancyRequestId: 0,
   weather: null,
   weatherUpdatedAt: null,
   mode: "colour",
@@ -680,11 +679,8 @@ async function refreshLight({ forceSync = false } = {}) {
 }
 
 async function refreshOccupancy() {
-  const requestId = ++state.occupancyRequestId;
   try {
-    const occupancy = await TuyaApi.getOccupancyStatus();
-    if (requestId !== state.occupancyRequestId) return;
-    state.occupancy = occupancy;
+    state.occupancy = await TuyaApi.getOccupancyStatus();
     state.occupancyUpdatedAt = new Date();
   } catch (error) {
     ui.errorText.textContent = error.message;
@@ -992,7 +988,7 @@ refreshLight();
 refreshOccupancy();
 refreshWeather();
 setInterval(refreshLight, 8000);
-setInterval(refreshOccupancy, 500);
+setInterval(refreshOccupancy, 1000);
 setInterval(refreshWeather, 600000);
 startAr().catch((error) => {
   ui.note.textContent = `AR error: ${error.message}`;
