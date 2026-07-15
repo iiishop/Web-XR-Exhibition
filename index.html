@@ -572,8 +572,7 @@ function drawWeatherBoard() {
 
   const rows = [
     ["Temperature", indoor == null ? "-" : `${indoor.toFixed(1)} C`],
-    ["Humidity", humidity == null ? "-" : `${humidity}%`],
-    ["Source", "wttr.in + 3 C"]
+    ["Humidity", humidity == null ? "-" : `${humidity}%`]
   ];
   rows.forEach(([label, value], index) => {
     const y = 155 + index * 54;
